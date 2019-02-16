@@ -31,7 +31,7 @@ import java.nio.ByteOrder;
 import java.lang.reflect.Method;
 
     enum State {
-        STARTUP, GET_BROADCAST, INIT, WRITE_DATA, DEBUG;
+        STARTUP, GET_BROADCAST, INIT, WRITE_DATA;
     }
 
     enum Command {
@@ -95,24 +95,17 @@ import java.lang.reflect.Method;
 
     public class DACPoint implements Byteable {
         byte[] p;
-        int x = 0;
-        int y = 0;
-        int r = 0;
-        int g = 0;
-        int b = 0;
 
         DACPoint() {
             p = new byte[18];
         }
 
         DACPoint(int x, int y, int r, int g, int b) {
-            this.x = ((abs(x)+(65536/2))%(65536))-(65536/2); this.y = ((abs(y)+(65536/2))%(65536))-(65536/2); this.r = r%65535; this.g = g%65535; this.b = b%65535;
             p = toBytes((char) 0x0, (char) x, (char) y, (char) r, (char) g, (char) b, (char) 0x0, (char) 0x0,
                     (char) 0x0);
         }
 
         DACPoint(int x, int y) {
-            this.x = x; this.y = y;
             p = toBytes((char) 0x0, (char) x, (char) y, (char) 65536, (char) 65536, (char) 65536, (char) 0x0,
                     (char) 0x0, (char) 0x0);
         }
@@ -128,62 +121,6 @@ import java.lang.reflect.Method;
 
 class Etherdream implements Runnable {
 
-    // Laser galvanometer simulation
-    volatile DACPoint[] lastDACPoints = {};
-    public volatile boolean debug = false;
-    float x=0,y=0;
-    public void paint() {
-      int i = 0;
-      for(DACPoint p: lastDACPoints){
-        colorMode(RGB, 65535);
-        
-        // Hookes Law (spring constant)
-        
-        // weak oscillation towards the center of galvanometer
-        // caused by the wire holding the mirror 
-        float k = 0.06;
-        float xf=-k*(float)abs(x);
-        float yf=-k*(float)abs(y);
-        
-        // strong oscillation caused by galvanometer magnetic field
-        k = 0.6;
-        float xxf=-k*(float)abs(x-p.x);
-        float yyf=-k*(float)abs(y-p.y);
-        
-        // simulated inertia
-        float nx=lerp(x,p.x+xf+xxf,0.1);
-        float ny=lerp(y,p.y+yf+yyf,0.1);
-        
-        // actual movement
-        // when d is low then the laser point is bright
-        float dist = dist(x,nx,y,ny);
-        float d = ((int)dist)/(65535.0);
-        
-        
-        stroke(p.r,p.g,p.b,max(0,min(65535,65535*d)));
-        
-        if(mousePressed)
-        stroke(p.r,p.g,p.b,65535);
-        
-        
-        strokeWeight(4*d);
-
-        line(((nx+(65536/2.0))/65536.0)*width,((ny+(65536/2.0))/65536.0)*height,
-            ((x+(65536/2.0))/65536.0)*width,((y+(65536/2.0))/65536.0)*height);
-        stroke(p.r,p.g+(i*100),p.b);
-        
-        strokeWeight(1+(i/100.0));
-
-        stroke(p.r,p.g,p.b,65536);
-        if(mousePressed)
-        point(((p.x+(65536/2.0))/65536.0)*(width),((p.y+(65536/2.0))/65536.0)*(height));
-        
-        x = nx;
-        y = ny;
-        i++;
-      } 
-    }
-  
     Method method_get_frame = null;
     Object processing = null;
 
@@ -354,9 +291,6 @@ class Etherdream implements Runnable {
                 lastState=state;
             }
             try {
-                if(debug){
-                  state = State.DEBUG;
-                }
                 switch (state) {
                     case GET_BROADCAST: {
                         // Wait and get broadcast using UDP
@@ -409,6 +343,7 @@ class Etherdream implements Runnable {
 
                         frame = getFrame();
                         write(Command.WRITE_DATA, frame);
+                        frame = getFrame(); // buffer next frame
                         
                         r = write(Command.BEGIN_PLAYBACK, 0, dacBroadcast.max_point_rate);
                         System.out.println(r);
@@ -418,15 +353,10 @@ class Etherdream implements Runnable {
                     case WRITE_DATA:{
                         DACResponse r = write(Command.PING);
                         if(r.buffer_fullness<(dacBroadcast.buffer_capacity-frame.length)){
-                            frame = getFrame();
                             write(Command.WRITE_DATA, frame);
+                            frame = getFrame(); // buffer next frame
                         }
                         break;
-                    }
-                    case DEBUG: {
-                      frame = getFrame();
-                      write(Command.WRITE_DATA, frame);
-                     // Thread.sleep(frame.length);
                     }
                     default:
                         state = State.GET_BROADCAST;
@@ -447,8 +377,7 @@ class Etherdream implements Runnable {
     DACPoint[] getFrame() {
         if(method_get_frame!=null){
             try {
-                lastDACPoints = (DACPoint[]) method_get_frame.invoke(processing, new Object[] {});
-                return lastDACPoints;
+                return (DACPoint[]) method_get_frame.invoke(processing, new Object[] {});
             } catch(Exception e) {
                 e.printStackTrace();
             }

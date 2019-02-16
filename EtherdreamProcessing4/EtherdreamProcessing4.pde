@@ -29,7 +29,7 @@ DACPoint[] getDACPoints() {
          */
 
         result[i] = new DACPoint((int) (32767 * Math.sin((i / 12.0))), (int) (32767 * Math.cos(i / 24.0)),
-                                                    0 /* red */,     65535 /* green */,     0 /* blue */);
+                                                    65530 /* red */,     65530 /* green */,     0 /* blue */);
    }  
    return result;
 }
