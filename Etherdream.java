@@ -50,48 +50,8 @@ public class Etherdream implements Runnable {
         }
     }
 
-    class EtherdreamInput implements Runnable {
-        InetAddress etherdreamAddress = null;
-
-        EtherdreamInput() {
-            Thread thread = new Thread(this);
-            thread.start();
-        }
-
-        @Override
-        public void run() {
-            while (true) {
-                try (DatagramSocket inSocket = new DatagramSocket(7654)) {
-
-                    // get broadcast
-                    byte[] buffer = new byte[512];
-                    DatagramPacket response = new DatagramPacket(buffer, buffer.length);
-                    inSocket.receive(response);
-
-                    /*
-                     * struct j4cDAC_broadcast { uint8_t mac_address[6]; uint16_t hw_revision;
-                     * uint16_t sw_revision; uint16_t buffer_capacity; uint32_t max_point_rate;
-                     * struct dac_status status; };
-                     */
-
-                    byte[] data = ByteFormatter.getFirstBytes(buffer, response.getLength());
-                    String quote = ByteFormatter.byteArrayToHexString(data);
-                    System.out.println(quote);
-                    System.out.println(response.getAddress().toString());
-                    etherdreamAddress = response.getAddress();
-
-                } catch (Exception e) {
-                    System.out.println(e);
-                }
-            }
-        }
-    }
-
     @Override
     public void run() {
-
-        EtherdreamInput input = new EtherdreamInput();
-
         EtherdreamState state = EtherdreamState.GET_BROADCAST;
         InetAddress etherdreamAddress = null;
         while (true) {
@@ -100,26 +60,68 @@ public class Etherdream implements Runnable {
 
                 switch (state) {
                     case GET_BROADCAST: {
-                        Thread.sleep(10);
-                        // get broadcast
-                        etherdreamAddress = input.etherdreamAddress;
-                        if (etherdreamAddress != null) {
-                            state = EtherdreamState.KEEP_ALIVE_PING;
+                        // get broadcast using UDP
+                        try (DatagramSocket inSocket = new DatagramSocket(7654)) {
+
+                            // get broadcast
+                            byte[] buffer = new byte[512];
+                            DatagramPacket response = new DatagramPacket(buffer, buffer.length);
+                            inSocket.receive(response);
+        
+                            /*
+                             * struct j4cDAC_broadcast { uint8_t mac_address[6]; uint16_t hw_revision;
+                             * uint16_t sw_revision; uint16_t buffer_capacity; uint32_t max_point_rate;
+                             * struct dac_status status; };
+                             */
+        
+                            byte[] data = ByteFormatter.getFirstBytes(buffer, response.getLength());
+                            String quote = ByteFormatter.byteArrayToHexString(data);
+                            System.out.println(quote);
+                            System.out.println(response.getAddress().toString());
+                            etherdreamAddress = response.getAddress();
+        
+                            if (etherdreamAddress != null) {
+                                state = EtherdreamState.KEEP_ALIVE_PING;
+                            }
+
+                        } catch (Exception e) {
+                            System.out.println(e);
                         }
 
                         break;
                     }
                     case KEEP_ALIVE_PING: {
-                        // Send ping
+                        // Send ping using TCP
                         EtherdreamCommand cmd = EtherdreamCommand.PING;
                         System.out.println(cmd);
-                        DatagramPacket request = new DatagramPacket(cmd.bytes(), cmd.bytes().length, etherdreamAddress,
-                                7654);
-                        outSocket.send(request);
 
                         // Get ACK
-                        Thread.sleep(100);
+                        Thread.sleep(1000);
                         state = EtherdreamState.KEEP_ALIVE_PING;
+
+                        try (Socket socket = new Socket(etherdreamAddress, 7765)) { // 7765
+ 
+                            OutputStream output = socket.getOutputStream();
+                            InputStream input = socket.getInputStream();
+                            System.out.println("Writing ");
+                            output.write(cmd.bytes());
+                            System.out.println("Written ");
+                            
+                            
+                 
+                            byte[] bytes = { (byte) input.read(),(byte) input.read(),(byte) input.read() };
+                            System.out.println("Read ");
+                            
+                            System.out.println(ByteFormatter.byteArrayToHexString(bytes));
+                            
+                        } catch (UnknownHostException ex) {
+                 
+                            System.out.println("Server not found: " + ex.getMessage());
+                 
+                        } catch (IOException ex) {
+                 
+                            System.out.println("I/O error: " + ex.getMessage());
+                        }
 
                         break;
                     }
