@@ -1,8 +1,7 @@
 
 import java.io.*;
 import java.net.*;
-
-import se.zafena.util.ByteFormatter;
+import java.util.Arrays;
 
 public class Etherdream implements Runnable {
 
@@ -17,27 +16,26 @@ public class Etherdream implements Runnable {
             try {
                 Thread.sleep(4000);
             } catch (InterruptedException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
-
         }
     }
-    // https://ether-dream.com/protocol.html
-
-    enum EtherdreamState {
+    
+    enum State {
         GET_BROADCAST, KEEP_ALIVE_PING,
     }
 
-    enum EtherdreamCommand {
+    // https://ether-dream.com/protocol.html
+
+    enum Command {
         PREPARE_STREAM(0x70), BEGIN_PLAYBACK(0x62), QUEUE_RATE_CHANGE(0x74), WRITE_DATA(0x64), STOP(0x73),
-        EMERGENCY_STOP(0x00), CLEAR_EMERGENCY_STOP(0x63), PING(0x3F),
+        EMERGENCY_STOP(0x00), EMERGENCY_STOP_ALTERNATIVE(0xFF), CLEAR_EMERGENCY_STOP(0x63), PING(0x3F),
 
         ACK_RESPONSE(0x61), NAK_FULL_RESPONSE(0x46), NAK_INVALID_RESPONSE(0x49), NAK_STOPCONDITION_RESPONSE(0x21);
 
         final byte command;
 
-        private EtherdreamCommand(int cmd) {
+        private Command(int cmd) {
             command = (byte) (cmd & 0xFF);
         }
 
@@ -45,22 +43,37 @@ public class Etherdream implements Runnable {
             return new byte[] { command };
         }
 
-        public String toString() {
-            return ByteFormatter.byteArrayToHexString(bytes());
+        public byte getCommand() {
+            return command;
         }
     }
 
+    enum DACStatus {
+        IDLE(0x01), PREPARED(0x02), PLAYING(0x03);
+
+        final byte status;
+
+        private DACStatus(int cmd) {
+            status = (byte) (cmd & 0xFF);
+        }
+
+        public byte[] bytes() {
+            return new byte[] { status };
+        }
+    }
+
+
     @Override
     public void run() {
-        EtherdreamState state = EtherdreamState.GET_BROADCAST;
+        State state = State.GET_BROADCAST;
         InetAddress etherdreamAddress = null;
         while (true) {
             System.out.println("state " + state);
-            try (DatagramSocket outSocket = new DatagramSocket()) {
-
+            try {
                 switch (state) {
                     case GET_BROADCAST: {
-                        // get broadcast using UDP
+                        // Wait and get broadcast using UDP
+
                         try (DatagramSocket inSocket = new DatagramSocket(7654)) {
 
                             // get broadcast
@@ -69,67 +82,90 @@ public class Etherdream implements Runnable {
                             inSocket.receive(response);
         
                             /*
-                             * struct j4cDAC_broadcast { uint8_t mac_address[6]; uint16_t hw_revision;
-                             * uint16_t sw_revision; uint16_t buffer_capacity; uint32_t max_point_rate;
-                             * struct dac_status status; };
+                             * struct j4cDAC_broadcast { 
+                             *   uint8_t mac_address[6];
+                             *   uint16_t hw_revision;
+                             *   uint16_t sw_revision;
+                             *   uint16_t buffer_capacity;
+                             *   uint32_t max_point_rate;
+                             *   struct dac_status status;
+                             * };
                              */
         
-                            byte[] data = ByteFormatter.getFirstBytes(buffer, response.getLength());
-                            String quote = ByteFormatter.byteArrayToHexString(data);
-                            System.out.println(quote);
-                            System.out.println(response.getAddress().toString());
+                            byte[] broadcast = Arrays.copyOfRange(buffer, 0, response.getLength());
+
                             etherdreamAddress = response.getAddress();
         
                             if (etherdreamAddress != null) {
-                                state = EtherdreamState.KEEP_ALIVE_PING;
+                                state = State.KEEP_ALIVE_PING;
                             }
 
-                        } catch (Exception e) {
-                            System.out.println(e);
                         }
 
                         break;
                     }
                     case KEEP_ALIVE_PING: {
-                        // Send ping using TCP
-                        EtherdreamCommand cmd = EtherdreamCommand.PING;
-                        System.out.println(cmd);
-
-                        // Get ACK
-                        Thread.sleep(1000);
-                        state = EtherdreamState.KEEP_ALIVE_PING;
-
-                        try (Socket socket = new Socket(etherdreamAddress, 7765)) { // 7765
+                        // Send ping using TCP port 7765
+                        
+                        try (Socket socket = new Socket(etherdreamAddress, 7765)) {
  
+                            Thread.sleep(500);
+                            Command cmd = Command.PING;
                             OutputStream output = socket.getOutputStream();
                             InputStream input = socket.getInputStream();
-                            System.out.println("Writing ");
                             output.write(cmd.bytes());
-                            System.out.println("Written ");
                             
+                            /*  
+                             *  struct dac_response {
+	                         *    uint8_t response;
+	                         *    uint8_t command;
+	                         *    struct status dac_status;
+                             *  };  
+                             */
                             
-                 
-                            byte[] bytes = { (byte) input.read(),(byte) input.read(),(byte) input.read() };
-                            System.out.println("Read ");
-                            
-                            System.out.println(ByteFormatter.byteArrayToHexString(bytes));
-                            
-                        } catch (UnknownHostException ex) {
-                 
-                            System.out.println("Server not found: " + ex.getMessage());
-                 
-                        } catch (IOException ex) {
-                 
-                            System.out.println("I/O error: " + ex.getMessage());
+                            byte[] dac_response = input.readNBytes(3);
+
+                            // make sure we got an ACK
+                            if(dac_response[0]!=Command.ACK_RESPONSE.command){
+                                state = State.GET_BROADCAST;
+                                break;
+                            }
+
+                            // make sure we got the response form the PING command
+                            if(dac_response[1]!=cmd.command){
+                                state = State.GET_BROADCAST;
+                                break;
+                            }
+                            /*
+                             *   struct dac_status {
+                             *       uint8_t protocol;
+                             *       uint8_t light_engine_state;
+                             *       uint8_t playback_state;
+                             *       uint8_t source;
+                             *       uint16_t light_engine_flags;
+                             *       uint16_t playback_flags;
+                             *       uint16_t source_flags;
+                             *       uint16_t buffer_fullness;
+                             *	    uint32_t point_rate;
+                             *	    uint32_t point_count;
+                             *   };
+                             */
+                            byte[] dac_status = input.readNBytes(20);
+
                         }
 
                         break;
                     }
                     default:
-                        state = EtherdreamState.GET_BROADCAST;
+                        state = State.GET_BROADCAST;
                 }
             } catch (Exception e) {
-                state = EtherdreamState.GET_BROADCAST;
+                /* If any IO error occour
+                 * for any reason such as
+                 * network cable disconnect
+                 * then try locate the Etherdream DAC again
+                 */ 
+                state = State.GET_BROADCAST;
                 System.out.println(e);
             }
 
