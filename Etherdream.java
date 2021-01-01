@@ -29,11 +29,15 @@ public class Etherdream implements Runnable {
         return result;
     }
 
-    static byte[] concat(DACPoint... arrays) {
+    interface Byteable {
+        public byte[] bytes();
+    }
+
+    static byte[] concat(Byteable... arrays) {
         byte[][] result = new byte[arrays.length][];
         int i = 0;
-        for(DACPoint a:arrays){
-            result[i]=a.bytes;
+        for(Byteable a:arrays){
+            result[i]=a.bytes();
             i++;
         }
         return concat(result);
@@ -79,7 +83,7 @@ public class Etherdream implements Runnable {
         }
 
         public byte[] bytes(DACPoint p) {
-            return concat(bytes(), new byte[]{(byte)1} , p.bytes);
+            return concat(bytes(), new byte[]{(byte)1} , p.bytes());
         }
 
         public byte[] bytes(DACPoint[] p) {
@@ -107,15 +111,15 @@ public class Etherdream implements Runnable {
         }
     }
 
-    public class DACPoint {
-        public byte[] bytes = new byte[18];
+    public class DACPoint implements Byteable {
+        byte[] b = new byte[18];
 
         /*
          * struct dac_point { uint16_t control; int16_t x; int16_t y; uint16_t r;
          * uint16_t g; uint16_t b; uint16_t i; uint16_t u1; uint16_t u2; };
          */
-        byte[] bytes() {
-            return bytes;
+        public byte[] bytes() {
+            return b;
         }
     }
 
