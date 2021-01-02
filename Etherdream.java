@@ -252,6 +252,8 @@ public class Etherdream implements Runnable {
         output.write(bytes);
         response = readResponse(cmd);
         System.out.println("buffered "+response.point_count);
+
+        raw = bytes;
     
         return response;
 
@@ -401,10 +403,10 @@ public class Etherdream implements Runnable {
                         write(Command.PREPARE_STREAM);
                   
                         System.out.println("Filling buffer");
-                        //write(Command.WRITE_DATA, getFrame());
+                        write(Command.WRITE_DATA, getFrame());
                         
-                        output.write(raw);
-                        System.out.println(readResponse(Command.WRITE_DATA));
+                        //output.write(raw);
+                        //System.out.println(readResponse(Command.WRITE_DATA));
                         
                         write(Command.BEGIN_PLAYBACK, 0, 2400);
 
@@ -452,8 +454,8 @@ public class Etherdream implements Runnable {
     DACPoint[] getFrame() {
         DACPoint[] result = new DACPoint[2400];
         for (int i = 0; i < 2400; i++) {
-            result[i] = new DACPoint((int) (65534 * Math.sin(i / 24000.0)), (int) (65534 * Math.cos(i / 24000.0)),
-                    10000, 0, 0);
+            result[i] = new DACPoint((int) (10000 * Math.sin(i / 24.0)), (int) (10000 * Math.cos(i / 24.0)),
+                    65530, 0, 0);
             //result[i] = new DACPoint(i, 10, 60000, 0, 0);
         }
         return result;
