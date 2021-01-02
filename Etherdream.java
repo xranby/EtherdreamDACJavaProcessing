@@ -210,16 +210,15 @@ public class Etherdream implements Runnable {
     }
 
     void write(Command cmd, int... data) throws IOException {
-        switch (cmd) {
-            case BEGIN_PLAYBACK:
-                System.out.println(((char) cmd.command));
-                output.write(cmd.bytes(data));
-                break;
-            default:
-                System.out.println(((char) cmd.command));
-                output.write(cmd.bytes());
-                readResponse(cmd);
-        }
+        System.out.println(((char) cmd.command));
+        output.write(cmd.bytes(data));
+        readResponse(cmd);
+    }
+
+    void write(Command cmd, DACPoint... data) throws IOException {
+        System.out.println(((char) cmd.command));
+        output.write(cmd.bytes(data));
+        readResponse(cmd);
     }
 
     void readResponse(Command cmd) throws IOException {
@@ -320,21 +319,12 @@ public class Etherdream implements Runnable {
                         break;
                     }
                     case WRITE_DATA: {
-                        output.write(Command.WRITE_DATA.bytes(getFrame()));
-                        output.flush();
-                        System.out.println("written");
-                        output.flush();
-
-                        byte[] dac_status = input.readNBytes(22);
-                        System.out.println(ByteFormatter.byteArrayToHexString(dac_status));
-                        System.out.println("read response");
+                        write(Command.WRITE_DATA, getFrame());
                         state = State.BEGIN_PLAYBACK;
                         break;
                     }
                     case BEGIN_PLAYBACK: {
-                        output.write(Command.BEGIN_PLAYBACK.bytes(0, 24000));
-                        output.flush();
-                        byte[] dac_status = input.readNBytes(22);
+                        write(Command.BEGIN_PLAYBACK, 0, 24000);
                         state = State.WRITE_DATA;
                         break;
                     }
