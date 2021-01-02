@@ -4,8 +4,116 @@ import java.net.*;
 import java.util.Arrays;
 
 import se.zafena.util.ByteFormatter;
+import java.nio.ByteBuffer;
 
 public class Etherdream implements Runnable {
+
+    // superbobs toBytes https://gist.github.com/superbob/6548493
+
+    /**
+     * Shorthand method to init a byte array from an char.<br>
+     * Usefull to get a
+     * <code>new byte[] { (byte) 0x01, (byte) 0x02 }</code>
+     * from a <code>0x0102</code>.<br>
+     * Usage: <code>byte[] array = toBytes(0x0102);</code><br>
+     * It works for 2 bytes arrays (char).<br>
+     * It works for any multiple of 2 bytes arrays.<br>
+     * Ex: <code>byte[] longArray = toBytes(0x0102, 0xAABB, 0x1112)</code>
+     * 
+     * @param charVal first int to convert in the resulting array (4 bytes), mandatory
+     * @param charArray additional ints to add to the array (any more 4 bytes ints)
+     * @return the resulting byte array
+     */
+    public static byte[] toBytes(final char charVal, final char... charArray) {
+        if (charArray == null || (charArray.length == 0)) {
+            return ByteBuffer.allocate(2).putChar(charVal).array();
+        } else {
+            final ByteBuffer bb = ByteBuffer.allocate(2 + (charArray.length * 2)).putChar(charVal);
+            for (final char val : charArray) {
+                bb.putChar(val);
+            }
+            return bb.array();
+        }
+    }
+
+    /**
+     * Shorthand method to init a byte array from an int.<br>
+     * Usefull to get a
+     * <code>new byte[] { (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04 }</code>
+     * from a <code>0x01020304</code>.<br>
+     * Usage: <code>byte[] array = toBytes(0x01020304);</code><br>
+     * It works for 4 bytes arrays (int).<br>
+     * It works for any multiple of 4 bytes arrays.<br>
+     * Ex: <code>byte[] longArray = toBytes(0x01020304, 0xAABBCCDD, 0x11121314)</code>
+     * 
+     * @param intVal first int to convert in the resulting array (4 bytes), mandatory
+     * @param intArray additional ints to add to the array (any more 4 bytes ints)
+     * @return the resulting byte array
+     */
+    public static byte[] toBytes(final int intVal, final int... intArray) {
+        if (intArray == null || (intArray.length == 0)) {
+            return ByteBuffer.allocate(4).putInt(intVal).array();
+        } else {
+            final ByteBuffer bb = ByteBuffer.allocate(4 + (intArray.length * 4)).putInt(intVal);
+            for (final int val : intArray) {
+                bb.putInt(val);
+            }
+            return bb.array();
+        }
+    }
+
+    /**
+     * Shorthand method to init a byte array from a short.<br>
+     * Usefull to get a
+     * <code>new byte[] { (byte) 0x01, (byte) 0x02 }</code>
+     * from a <code>0x0102</code>.<br>
+     * Usage: <code>byte[] array = toBytes((short) 0x0102);</code><br>
+     * Warning: If the literal is not cast to short, it will be treated as an int, resulting in the call to the {@link #toBytes(int, int...)} method and generating a 4 bytes buffer instead of a 2 bytes buffer.<br>
+     * It works for 2 bytes arrays (short).<br>
+     * It works for any multiple of 2 bytes arrays.<br>
+     * Ex: <code>byte[] longArray = toBytes(0x0102, 0xAABB, 0x1112)</code>
+     * 
+     * @param shortVal first short to convert in the resulting array (2 bytes), mandatory
+     * @param shortArray additional shorts to add to the array (any more 2 bytes shorts)
+     * @return the resulting byte array
+     */
+    public static byte[] toBytes(final short shortVal, final short... shortArray) {
+        if (shortArray == null || (shortArray.length == 0)) {
+            return ByteBuffer.allocate(2).putShort(shortVal).array();
+        } else {
+            final ByteBuffer bb = ByteBuffer.allocate(2 + (shortArray.length * 2)).putShort(shortVal);
+            for (final short val : shortArray) {
+                bb.putShort(val);
+            }
+            return bb.array();
+        }
+    }
+
+    /**
+     * Shorthand method to init a byte array from a long.<br>
+     * Usefull to get a
+     * <code>new byte[] { (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04, (byte) 0x05, (byte) 0x06, (byte) 0x07, (byte) 0x08 }</code>
+     * from a <code>0x0102030405060708L</code>.<br>
+     * Usage: <code>byte[] array = toBytes(0x0102030405060708L);</code><br>
+     * It works for 8 bytes arrays (long).<br>
+     * It works for any multiple of 8 bytes arrays.<br>
+     * Ex: <code>byte[] longArray = toBytes(0x0102030405060708L, 0xAABBCCDDEEFF0011L)</code>
+     * 
+     * @param intVal first long to convert in the resulting array (8 bytes), mandatory
+     * @param intArray additional longs to add to the array (any more 8 bytes longs)
+     * @return the resulting byte array
+     */
+    public static byte[] toBytes(final long longVal, final long... longArray) {
+        if (longArray == null || (longArray.length == 0)) {
+            return ByteBuffer.allocate(8).putLong(longVal).array();
+        } else {
+            final ByteBuffer bb = ByteBuffer.allocate(8 + (longArray.length * 8)).putLong(longVal);
+            for (final long val : longArray) {
+                bb.putLong(val);
+            }
+            return bb.array();
+        }
+    }
 
     // Wayne Uroda's byte concat
     // https://stackoverflow.com/questions/5513152/easy-way-to-concatenate-two-byte-arrays/12141556#12141556
@@ -112,14 +220,26 @@ public class Etherdream implements Runnable {
     }
 
     public class DACPoint implements Byteable {
-        byte[] b = new byte[18];
+        byte[] p;
+
+        DACPoint(){
+            p = new byte[18];
+        }
+
+        DACPoint(int x, int y, int r, int g, int b){
+            p = toBytes((char)0x0, (char)x, (char)y, (char)r, (char)g, (char)b, (char)0x0, (char)0x0 ,(char)0x0);
+        }
+
+        DACPoint(int x, int y){
+            p = toBytes((char)0x0, (char)x, (char)y, (char)65536, (char)65536, (char)65536, (char)0x0, (char)0x0 ,(char)0x0);
+        }
 
         /*
          * struct dac_point { uint16_t control; int16_t x; int16_t y; uint16_t r;
          * uint16_t g; uint16_t b; uint16_t i; uint16_t u1; uint16_t u2; };
          */
         public byte[] bytes() {
-            return b;
+            return p;
         }
     }
 
@@ -210,7 +330,7 @@ public class Etherdream implements Runnable {
                             byte[] dac_status = input.readNBytes(20);
 
                         }
-                        write(Command.WRITE_DATA.bytes(new DACPoint[]{new DACPoint(),new DACPoint()}));
+                        write(Command.WRITE_DATA.bytes(new DACPoint[]{new DACPoint(10,10),new DACPoint(-10,-10)}));
                         break;
                     }
                     case WRITE_DATA: {
