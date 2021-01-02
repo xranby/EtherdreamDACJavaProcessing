@@ -231,6 +231,24 @@ public class Etherdream implements Runnable {
     }
 
     void readResponse(Command cmd) throws IOException {
+        byte[] dac_response = input.readNBytes(22);
+
+        System.out.println(((char) cmd.command) + " " + new DACResponse(dac_response));
+
+        // make sure we got an ACK
+        if (dac_response[0] != Command.ACK_RESPONSE.command) {
+            System.out.println("Unexpected response: "+((char) dac_response[0]));
+            state = State.GET_BROADCAST;
+        }
+
+        // make sure we got the response for current command
+        if (dac_response[1] != cmd.command) {
+            System.out.println("Unexpected response from wrong command: "+((char) dac_response[1]));
+            state = State.GET_BROADCAST;
+        }
+    }
+
+    class DACResponse {
         /*
          * struct dac_response { uint8_t response; uint8_t command; struct status
          * dac_status; };
@@ -240,19 +258,36 @@ public class Etherdream implements Runnable {
          * playback_flags; uint16_t source_flags; uint16_t buffer_fullness; uint32_t
          * point_rate; uint32_t point_count; };
          */
-
-        byte[] dac_response = input.readNBytes(22);
-
-        System.out.println(((char) cmd.command) + " " + ByteFormatter.byteArrayToHexString(dac_response));
-
-        // make sure we got an ACK
-        if (dac_response[0] != Command.ACK_RESPONSE.command) {
-            state = State.GET_BROADCAST;
+        public final int 
+        /* uint8_t  */   response, command, protocol, light_engine_state, playback_state, source,
+        /* uint16_t */   light_engine_flags, playback_flags, source_flags, buffer_fullness,
+        /* uint32_t */   point_rate, point_count;
+        
+        
+        DACResponse(byte[] dac_response){
+            final ByteBuffer bb = ByteBuffer.wrap(dac_response);
+            bb.order(ByteOrder.LITTLE_ENDIAN);
+            
+            response = bb.get()&0xFF;
+            command = bb.get()&0xFF;
+            /* uint8_t  */
+            protocol = bb.get()&0xFF;
+            light_engine_state = bb.get()&0xFF;
+            playback_state = bb.get()&0xFF;
+            source = bb.get()&0xFF;
+            /* uint16_t */
+            light_engine_flags = bb.getShort()&0xFFFF;
+            playback_flags = bb.getShort()&0xFFFF;
+            source_flags = bb.getShort()&0xFFFF;
+            buffer_fullness = bb.getShort()&0xFFFF;
+            /* uint32_t */
+            point_rate = bb.getInt()&0xFFFFFFFF;
+            point_count = bb.getInt()&0xFFFFFFFF;
         }
 
-        // make sure we got the response for current command
-        if (dac_response[1] != cmd.command) {
-            state = State.GET_BROADCAST;
+        public String toString(){
+            return " light_engine state: "+light_engine_state+" playback state: "+playback_state+
+                   " buffer_fullness: "+buffer_fullness+" point rate: "+point_rate+" point count: "+point_count;
         }
     }
 
