@@ -6,11 +6,13 @@ import java.util.Arrays;
 import se.zafena.util.ByteFormatter;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 public class Etherdream implements Runnable {
 
     public static byte[] toBytes(final char... charArray) {
-        final ByteBuffer bb = ByteBuffer.allocate(2 + (charArray.length * 2));
+        final ByteBuffer bb = ByteBuffer.allocate((charArray.length * 2));
         bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final char val : charArray) {
             bb.putChar(val);
@@ -19,7 +21,7 @@ public class Etherdream implements Runnable {
     }
 
     public static byte[] toBytes(final int... intArray) {
-        final ByteBuffer bb = ByteBuffer.allocate(4 + (intArray.length * 4));
+        final ByteBuffer bb = ByteBuffer.allocate((intArray.length * 4));
         bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final int val : intArray) {
             bb.putInt(val);
@@ -27,8 +29,17 @@ public class Etherdream implements Runnable {
         return bb.array();
     }
 
+    public static byte[] toBytesShort(final int... intArray) {
+        final ByteBuffer bb = ByteBuffer.allocate((intArray.length * 2));
+        bb.order(ByteOrder.LITTLE_ENDIAN);
+        for (final int val : intArray) {
+            bb.putShort((short)val);
+        }
+        return bb.array();
+    }
+
     public static byte[] toBytes(final short... shortArray) {
-        final ByteBuffer bb = ByteBuffer.allocate(2 + (shortArray.length * 2));
+        final ByteBuffer bb = ByteBuffer.allocate((shortArray.length * 2));
         bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final short val : shortArray) {
             bb.putShort(val);
@@ -37,7 +48,7 @@ public class Etherdream implements Runnable {
     }
 
     public static byte[] toBytes(final long... longArray) {
-        final ByteBuffer bb = ByteBuffer.allocate(8 + (longArray.length * 8));
+        final ByteBuffer bb = ByteBuffer.allocate((longArray.length * 8));
         bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final long val : longArray) {
             bb.putLong(val);
@@ -83,7 +94,16 @@ public class Etherdream implements Runnable {
 
     final Thread thread;
 
+    byte[] raw;
+
     public Etherdream() {
+        try {
+            raw = ByteFormatter.HexStringToByteArray(new String(Files.readAllBytes(Paths.get("data.txt"))));
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
         thread = new Thread(this);
         thread.start();
     }
@@ -126,16 +146,12 @@ public class Etherdream implements Runnable {
         public byte[] bytes(int... data) {
             switch (this) {
                 case BEGIN_PLAYBACK:
-                    return concat(bytes(), toBytes((short) data[0]), toBytes(data[1]));
+                    // 62000060090000
+                    return concat(bytes(), toBytesShort(data[0]), toBytes(data[1]));
                 default:
-                    return concat(bytes(), toBytes(data));
+                    return concat(bytes(), toBytesShort(data));
             }
 
-        }
-
-        public byte[] bytes(int lowWaterMark, int pointRate) {
-            byte[] w = concat(bytes(), toBytes((short) lowWaterMark), toBytes(pointRate));
-            return w;
         }
 
         public byte[] bytes(DACPoint p) {
@@ -200,6 +216,12 @@ public class Etherdream implements Runnable {
 
     DACResponse write(Command cmd) throws IOException {
         switch (cmd) {
+            case PING:
+                System.out.println(((char) cmd.command));
+                output.write(cmd.bytes());
+                DACResponse r = readResponse(cmd);
+                System.out.println(r);
+                return r;
             case VERSION:
                 System.out.println(((char) cmd.command));
                 output.write(cmd.bytes());
@@ -225,11 +247,12 @@ public class Etherdream implements Runnable {
     DACResponse write(Command cmd, DACPoint... data) throws IOException {
         System.out.println(((char) cmd.command));
         DACResponse response = null;
-        for(DACPoint d: data){
-        byte[] bytes = cmd.bytes(d);
+
+        byte[] bytes = cmd.bytes(data);
         output.write(bytes);
         response = readResponse(cmd);
-        }
+        System.out.println("buffered "+response.point_count);
+    
         return response;
 
     }
@@ -237,7 +260,11 @@ public class Etherdream implements Runnable {
     DACResponse readResponse(Command cmd) throws IOException {
         DACResponse dac_response = new DACResponse(input.readNBytes(22));
 
-        System.out.println(((char) cmd.command) + " " + dac_response);
+        //
+        if(dac_response.playback_state==3){
+            System.out.println("E-STOP: "+dac_response.light_engine_flags+ " "+dac_response.playback_flags);
+            System.out.println(((char) cmd.command) + " " + dac_response);
+        }
 
         // make sure we got an ACK
         if (dac_response.response != Command.ACK_RESPONSE.command) {
@@ -249,8 +276,10 @@ public class Etherdream implements Runnable {
         if (dac_response.command != cmd.command) {
             if(dac_response.command==Command.EMERGENCY_STOP.command){
                 System.out.println("E-STOP: "+dac_response.light_engine_flags);
+                System.out.println(((char) cmd.command) + " " + dac_response);
             } else {
                 System.out.println("Unexpected response from wrong command: "+((char) dac_response.command));
+                System.out.println(((char) cmd.command) + " " + dac_response);
             }
             state = State.GET_BROADCAST;
         }
@@ -370,13 +399,38 @@ public class Etherdream implements Runnable {
                         }
 
                         write(Command.PREPARE_STREAM);
-                        write(Command.QUEUE_RATE_CHANGE, 3);
                   
-                        write(Command.WRITE_DATA, getFrame());
+                        System.out.println("Filling buffer");
+                        //write(Command.WRITE_DATA, getFrame());
                         
-                        write(Command.BEGIN_PLAYBACK, 0, 3);
+                        output.write(raw);
+                        System.out.println(readResponse(Command.WRITE_DATA));
+                        
+                        write(Command.BEGIN_PLAYBACK, 0, 2400);
 
-                        Thread.sleep(4000);
+                        Thread.sleep(500);
+                        System.out.println("Re-Filling buffer");
+                        
+                        output.write(raw);
+                        System.out.println(readResponse(Command.WRITE_DATA));
+                        
+                        Thread.sleep(500);
+                        System.out.println("Re-Filling buffer");
+                        
+                        output.write(raw);
+                        System.out.println(readResponse(Command.WRITE_DATA));
+                        Thread.sleep(500);
+                        System.out.println("Re-Filling buffer");
+                        
+                        output.write(raw);
+                        System.out.println(readResponse(Command.WRITE_DATA));
+                        Thread.sleep(500);
+                        System.out.println("Re-Filling buffer");
+                        
+                        output.write(raw);
+                        System.out.println(readResponse(Command.WRITE_DATA));
+                        Thread.sleep(500);
+                        
                         break;
                     }
                     default:
@@ -396,12 +450,13 @@ public class Etherdream implements Runnable {
     }
 
     DACPoint[] getFrame() {
-        DACPoint[] result = new DACPoint[5];
-        for (int i = 0; i < 5; i++) {
-            //result[i] = new DACPoint((int) (65534 * Math.sinh(i / 24000.0)), (int) (65534 * Math.cos(i / 24000.0)),
-            //        10000, 0, 0);
-            result[i] = new DACPoint(i, 10, 60000, 0, 0);
+        DACPoint[] result = new DACPoint[2400];
+        for (int i = 0; i < 2400; i++) {
+            result[i] = new DACPoint((int) (65534 * Math.sin(i / 24000.0)), (int) (65534 * Math.cos(i / 24000.0)),
+                    10000, 0, 0);
+            //result[i] = new DACPoint(i, 10, 60000, 0, 0);
         }
         return result;
     }
+
 }
