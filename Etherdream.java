@@ -198,7 +198,7 @@ public class Etherdream implements Runnable {
     OutputStream output = null;
     InputStream input = null;
 
-    void write(Command cmd) throws IOException {
+    DACResponse write(Command cmd) throws IOException {
         switch (cmd) {
             case VERSION:
                 System.out.println(((char) cmd.command));
@@ -206,46 +206,56 @@ public class Etherdream implements Runnable {
                 byte[] version = input.readNBytes(32);
                 String versionString = new String(version).replace("\0", "").strip();
                 System.out.println("Version: " + versionString);
-                break;
+                return null;
             default:
                 System.out.println(((char) cmd.command));
                 output.write(cmd.bytes());
-                readResponse(cmd);
+                return readResponse(cmd);
         }
     }
 
-    void write(Command cmd, int... data) throws IOException {
+    DACResponse write(Command cmd, int... data) throws IOException {
         System.out.println(((char) cmd.command));
         byte[] bytes = cmd.bytes(data);
         System.out.println(ByteFormatter.byteArrayToHexString(bytes));
         output.write(bytes);
-        readResponse(cmd);
+        return readResponse(cmd);
     }
 
-    void write(Command cmd, DACPoint... data) throws IOException {
+    DACResponse write(Command cmd, DACPoint... data) throws IOException {
         System.out.println(((char) cmd.command));
-        byte[] bytes = cmd.bytes(data);
-        System.out.println(ByteFormatter.byteArrayToHexString(bytes));
+        DACResponse response = null;
+        for(DACPoint d: data){
+        byte[] bytes = cmd.bytes(d);
         output.write(bytes);
-        readResponse(cmd);
+        response = readResponse(cmd);
+        }
+        return response;
+
     }
 
-    void readResponse(Command cmd) throws IOException {
-        byte[] dac_response = input.readNBytes(22);
+    DACResponse readResponse(Command cmd) throws IOException {
+        DACResponse dac_response = new DACResponse(input.readNBytes(22));
 
-        System.out.println(((char) cmd.command) + " " + new DACResponse(dac_response));
+        System.out.println(((char) cmd.command) + " " + dac_response);
 
         // make sure we got an ACK
-        if (dac_response[0] != Command.ACK_RESPONSE.command) {
-            System.out.println("Unexpected response: "+((char) dac_response[0]));
+        if (dac_response.response != Command.ACK_RESPONSE.command) {
+            System.out.println("Unexpected response: "+((char) dac_response.response));
             state = State.GET_BROADCAST;
         }
 
         // make sure we got the response for current command
-        if (dac_response[1] != cmd.command) {
-            System.out.println("Unexpected response from wrong command: "+((char) dac_response[1]));
+        if (dac_response.command != cmd.command) {
+            if(dac_response.command==Command.EMERGENCY_STOP.command){
+                System.out.println("E-STOP: "+dac_response.light_engine_flags);
+            } else {
+                System.out.println("Unexpected response from wrong command: "+((char) dac_response.command));
+            }
             state = State.GET_BROADCAST;
         }
+
+        return dac_response;
     }
 
     class DACResponse {
@@ -351,26 +361,22 @@ public class Etherdream implements Runnable {
                     }
                     case INIT: {
                         // Send ping using TCP port 7765
-                        write(Command.PING);
+                        DACResponse r = write(Command.PING);
 
                         write(Command.VERSION);
 
-                        write(Command.CLEAR_EMERGENCY_STOP);
+                        if(r.light_engine_state==3){
+                            write(Command.CLEAR_EMERGENCY_STOP);
+                        }
 
                         write(Command.PREPARE_STREAM);
-
-                        state = State.WRITE_DATA;
-                        break;
-                    }
-                    case WRITE_DATA: {
+                        write(Command.QUEUE_RATE_CHANGE, 3);
+                  
                         write(Command.WRITE_DATA, getFrame());
-                        state = State.BEGIN_PLAYBACK;
-                        break;
-                    }
-                    case BEGIN_PLAYBACK: {
-                        write(Command.BEGIN_PLAYBACK, 0, 24000);
-                        Thread.sleep(1000);
-                        state = State.WRITE_DATA;
+                        
+                        write(Command.BEGIN_PLAYBACK, 0, 3);
+
+                        Thread.sleep(4000);
                         break;
                     }
                     default:
@@ -390,10 +396,11 @@ public class Etherdream implements Runnable {
     }
 
     DACPoint[] getFrame() {
-        DACPoint[] result = new DACPoint[2];
-        for (int i = 0; i < 2; i++) {
-            result[i] = new DACPoint((int) (65534 * Math.sinh(i / 24000.0)), (int) (65534 * Math.cos(i / 24000.0)),
-                    10000, 0, 0);
+        DACPoint[] result = new DACPoint[5];
+        for (int i = 0; i < 5; i++) {
+            //result[i] = new DACPoint((int) (65534 * Math.sinh(i / 24000.0)), (int) (65534 * Math.cos(i / 24000.0)),
+            //        10000, 0, 0);
+            result[i] = new DACPoint(i, 10, 60000, 0, 0);
         }
         return result;
     }
