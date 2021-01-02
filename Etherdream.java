@@ -5,11 +5,13 @@ import java.util.Arrays;
 
 import se.zafena.util.ByteFormatter;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 public class Etherdream implements Runnable {
 
     public static byte[] toBytes(final char... charArray) {
         final ByteBuffer bb = ByteBuffer.allocate(2 + (charArray.length * 2));
+        bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final char val : charArray) {
             bb.putChar(val);
         }
@@ -18,6 +20,7 @@ public class Etherdream implements Runnable {
 
     public static byte[] toBytes(final int... intArray) {
         final ByteBuffer bb = ByteBuffer.allocate(4 + (intArray.length * 4));
+        bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final int val : intArray) {
             bb.putInt(val);
         }
@@ -26,6 +29,7 @@ public class Etherdream implements Runnable {
 
     public static byte[] toBytes(final short... shortArray) {
         final ByteBuffer bb = ByteBuffer.allocate(2 + (shortArray.length * 2));
+        bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final short val : shortArray) {
             bb.putShort(val);
         }
@@ -34,6 +38,7 @@ public class Etherdream implements Runnable {
 
     public static byte[] toBytes(final long... longArray) {
         final ByteBuffer bb = ByteBuffer.allocate(8 + (longArray.length * 8));
+        bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final long val : longArray) {
             bb.putLong(val);
         }
@@ -211,13 +216,17 @@ public class Etherdream implements Runnable {
 
     void write(Command cmd, int... data) throws IOException {
         System.out.println(((char) cmd.command));
-        output.write(cmd.bytes(data));
+        byte[] bytes = cmd.bytes(data);
+        System.out.println(ByteFormatter.byteArrayToHexString(bytes));
+        output.write(bytes);
         readResponse(cmd);
     }
 
     void write(Command cmd, DACPoint... data) throws IOException {
         System.out.println(((char) cmd.command));
-        output.write(cmd.bytes(data));
+        byte[] bytes = cmd.bytes(data);
+        System.out.println(ByteFormatter.byteArrayToHexString(bytes));
+        output.write(bytes);
         readResponse(cmd);
     }
 
@@ -325,15 +334,10 @@ public class Etherdream implements Runnable {
                     }
                     case BEGIN_PLAYBACK: {
                         write(Command.BEGIN_PLAYBACK, 0, 24000);
+                        Thread.sleep(1000);
                         state = State.WRITE_DATA;
                         break;
                     }
-                    case IDLE:
-                        output.write(Command.WRITE_DATA.bytes(getFrame()));
-                        output.flush();
-                        byte[] dac_status = input.readNBytes(22);
-
-                        break;
                     default:
                         state = State.GET_BROADCAST;
                 }
@@ -351,8 +355,8 @@ public class Etherdream implements Runnable {
     }
 
     DACPoint[] getFrame() {
-        DACPoint[] result = new DACPoint[2000];
-        for (int i = 0; i < 2000; i++) {
+        DACPoint[] result = new DACPoint[2];
+        for (int i = 0; i < 2; i++) {
             result[i] = new DACPoint((int) (65534 * Math.sinh(i / 24000.0)), (int) (65534 * Math.cos(i / 24000.0)),
                     10000, 0, 0);
         }
