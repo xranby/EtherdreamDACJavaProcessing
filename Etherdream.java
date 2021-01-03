@@ -366,6 +366,7 @@ public class Etherdream implements Runnable {
         DACBroadcast dacBroadcast = null;
         InetAddress etherdreamAddress = null;
         Socket socket = null;
+        DACPoint[] frame = null;
 
         while (true) {
             if(lastState!=state){
@@ -425,7 +426,8 @@ public class Etherdream implements Runnable {
                         write(Command.PREPARE_STREAM);
                   
                         System.out.println("Filling initial buffer");
-                        write(Command.WRITE_DATA, getFrame());
+                        frame = getFrame();
+                        write(Command.WRITE_DATA, frame);
                         
                         write(Command.BEGIN_PLAYBACK, 0, 24000);
                         state = State.WRITE_DATA;
@@ -433,9 +435,10 @@ public class Etherdream implements Runnable {
                     }
                     case WRITE_DATA:{
                         DACResponse r = write(Command.PING);
-                        if(r.buffer_fullness<(dacBroadcast.buffer_capacity-2400)){
+                        if(r.buffer_fullness<(dacBroadcast.buffer_capacity-frame.length)){
                             System.out.println(r);
-                            write(Command.WRITE_DATA, getFrame());
+                            frame = getFrame();
+                            write(Command.WRITE_DATA, frame);
                         }
                         break;
                     }
