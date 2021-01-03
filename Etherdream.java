@@ -370,8 +370,8 @@ public class Etherdream implements Runnable {
 
         while (true) {
             if(lastState!=state){
-                lastState=state;
                 System.out.println("state: " +lastState+ " -> "+ state);
+                lastState=state;
             }
             try {
                 switch (state) {
