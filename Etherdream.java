@@ -403,32 +403,18 @@ public class Etherdream implements Runnable {
 
                         write(Command.PREPARE_STREAM);
                   
-                        System.out.println("Filling buffer");
+                        System.out.println("Filling initial buffer");
                         write(Command.WRITE_DATA, getFrame());
                         
-                        //output.write(raw);
-                        //System.out.println(readResponse(Command.WRITE_DATA));
-                        
-                        write(Command.BEGIN_PLAYBACK, 0, 2400);
-
-                        Thread.sleep(500);
-                        System.out.println("Re-Filling buffer");
-                        write(Command.WRITE_DATA, getFrame());
-                        
-                        Thread.sleep(500);
-                        System.out.println("Re-Filling buffer");
-                        
-                        write(Command.WRITE_DATA, getFrame());
-                        Thread.sleep(500);
-                        System.out.println("Re-Filling buffer");
-                        
-                        write(Command.WRITE_DATA, getFrame());
-                        Thread.sleep(500);
-                        System.out.println("Re-Filling buffer");
-                        
-                        write(Command.WRITE_DATA, getFrame());
-                        Thread.sleep(500);
-                        
+                        write(Command.BEGIN_PLAYBACK, 0, 24000);
+                        state = State.WRITE_DATA;
+                        break;
+                    }
+                    case WRITE_DATA:{
+                        DACResponse r = write(Command.PING);
+                        if(r.buffer_fullness<(3778-2400)){
+                            write(Command.WRITE_DATA, getFrame());
+                        }
                         break;
                     }
                     default:
@@ -464,8 +450,8 @@ public class Etherdream implements Runnable {
              *     0,     0, 27400  only dimmed blue
              */
 
-            result[i] = new DACPoint((int) (32767 * Math.sin(i / 24.0)), (int) (32767 * Math.cos(i / 24.0)),
-            0, 26500, 0);
+            result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/10000000.0)) / 24.0)), (int) (32767 * Math.cos(i / 24.0)),
+            26200,     0,     0);
         }
         return result;
     }
