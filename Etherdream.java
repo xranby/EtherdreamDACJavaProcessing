@@ -3,11 +3,8 @@ import java.io.*;
 import java.net.*;
 import java.util.Arrays;
 
-import se.zafena.util.ByteFormatter;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 
 public class Etherdream implements Runnable {
 
@@ -94,16 +91,7 @@ public class Etherdream implements Runnable {
 
     final Thread thread;
 
-    byte[] raw;
-
     public Etherdream() {
-        try {
-            raw = ByteFormatter.HexStringToByteArray(new String(Files.readAllBytes(Paths.get("data.txt"))));
-        } catch (IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-
         thread = new Thread(this);
         thread.start();
     }
@@ -239,7 +227,6 @@ public class Etherdream implements Runnable {
     DACResponse write(Command cmd, int... data) throws IOException {
         System.out.println(((char) cmd.command));
         byte[] bytes = cmd.bytes(data);
-        System.out.println(ByteFormatter.byteArrayToHexString(bytes));
         output.write(bytes);
         return readResponse(cmd);
     }
@@ -251,9 +238,7 @@ public class Etherdream implements Runnable {
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
         response = readResponse(cmd);
-        System.out.println("buffered "+response.point_count);
-
-        raw = bytes;
+        System.out.println("buffered "+response.buffer_fullness);
     
         return response;
 
@@ -361,7 +346,6 @@ public class Etherdream implements Runnable {
                              */
 
                             byte[] broadcast = Arrays.copyOfRange(buffer, 0, response.getLength());
-                            System.out.println(ByteFormatter.byteArrayToHexString(broadcast));
 
                             etherdreamAddress = response.getAddress();
 
@@ -412,25 +396,20 @@ public class Etherdream implements Runnable {
 
                         Thread.sleep(500);
                         System.out.println("Re-Filling buffer");
-                        
-                        output.write(raw);
-                        System.out.println(readResponse(Command.WRITE_DATA));
+                        write(Command.WRITE_DATA, getFrame());
                         
                         Thread.sleep(500);
                         System.out.println("Re-Filling buffer");
                         
-                        output.write(raw);
-                        System.out.println(readResponse(Command.WRITE_DATA));
+                        write(Command.WRITE_DATA, getFrame());
                         Thread.sleep(500);
                         System.out.println("Re-Filling buffer");
                         
-                        output.write(raw);
-                        System.out.println(readResponse(Command.WRITE_DATA));
+                        write(Command.WRITE_DATA, getFrame());
                         Thread.sleep(500);
                         System.out.println("Re-Filling buffer");
                         
-                        output.write(raw);
-                        System.out.println(readResponse(Command.WRITE_DATA));
+                        write(Command.WRITE_DATA, getFrame());
                         Thread.sleep(500);
                         
                         break;
@@ -454,11 +433,23 @@ public class Etherdream implements Runnable {
     DACPoint[] getFrame() {
         DACPoint[] result = new DACPoint[2400];
         for (int i = 0; i < 2400; i++) {
-            result[i] = new DACPoint((int) (10000 * Math.sin(i / 24.0)), (int) (10000 * Math.cos(i / 24.0)),
-                    65530, 0, 0);
-            //result[i] = new DACPoint(i, 10, 60000, 0, 0);
+
+            /* x,y   int min -32767 to max 32767
+             * r,g,b int min 0 to max 65535
+             *
+             * NOTE: TTL r,g,b transistors float from ~26100 to ~26800 up to ~27400
+             * this can be used as a hack to output reduced  on
+             * when using undimmable TTL laser driver boards
+             * 
+             * 26800, 26800, 27900  all dimmed  white
+             * 26200,     0,     0  only dimmed red
+             *     0, 26500,     0  only dimmed green
+             *     0,     0, 27400  only dimmed blue
+             */
+
+            result[i] = new DACPoint((int) (32767 * Math.sin(i / 24.0)), (int) (32767 * Math.cos(i / 24.0)),
+            0, 26500, 0);
         }
         return result;
     }
-
 }
