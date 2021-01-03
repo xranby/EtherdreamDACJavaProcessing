@@ -1,4 +1,26 @@
+/* LICENSE: BSD 2-Clause "Simplified" License
+Copyright 2021 Xerxes Rånby
 
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * Etherdream DAC for Java and Processing 4 
+ * By Xerxes Rånby 2021
+ * 
+ * Minimalistic implementation of the ether-dream protocol
+ * https://ether-dream.com/protocol.html
+ * 
+ * The code automatically discover the DAC by listeneing for the UDP broadcast
+ * The statemachine connects and maintains the connection with the DAC using TCP
+ * Connection is restarted automatically on connection loss.
+ * 
+ * 
+ */
 import java.io.*;
 import java.net.*;
 import java.util.Arrays;
@@ -8,6 +30,10 @@ import java.nio.ByteOrder;
 
 public class Etherdream implements Runnable {
 
+    /* Helperfunctions to convert arrays and multiarguments of ...
+     * to LITTLE_ENDIAN byte[] format used by the Etherdream DAC
+     * inspired by superbobs ByteUtil https://gist.github.com/superbob/6548493
+     */ 
     public static byte[] toBytes(final char... charArray) {
         final ByteBuffer bb = ByteBuffer.allocate((charArray.length * 2));
         bb.order(ByteOrder.LITTLE_ENDIAN);
@@ -44,17 +70,9 @@ public class Etherdream implements Runnable {
         return bb.array();
     }
 
-    public static byte[] toBytes(final long... longArray) {
-        final ByteBuffer bb = ByteBuffer.allocate((longArray.length * 8));
-        bb.order(ByteOrder.LITTLE_ENDIAN);
-        for (final long val : longArray) {
-            bb.putLong(val);
-        }
-        return bb.array();
-    }
-
-    // Wayne Uroda's byte concat
-    // https://stackoverflow.com/questions/5513152/easy-way-to-concatenate-two-byte-arrays/12141556#12141556
+    /* Wayne Uroda's byte[] concat
+     * https://stackoverflow.com/questions/5513152/easy-way-to-concatenate-two-byte-arrays/12141556#12141556
+     */
     static byte[] concat(byte[]... arrays) {
         // Determine the length of the result array
         int totalLength = 0;
@@ -75,6 +93,9 @@ public class Etherdream implements Runnable {
         return result;
     }
 
+    /* Interface Bytable allows concat to be used for 
+     * the DACPoint class
+     */
     interface Byteable {
         public byte[] bytes();
     }
@@ -89,10 +110,8 @@ public class Etherdream implements Runnable {
         return concat(result);
     }
 
-    final Thread thread;
-
     public Etherdream() {
-        thread = new Thread(this);
+        final Thread thread = new Thread(this);
         thread.start();
     }
 
@@ -110,8 +129,6 @@ public class Etherdream implements Runnable {
     enum State {
         GET_BROADCAST, INIT, WRITE_DATA, BEGIN_PLAYBACK, IDLE;
     }
-
-    // https://ether-dream.com/protocol.html
 
     enum Command {
         PREPARE_STREAM('p'), BEGIN_PLAYBACK('b'), QUEUE_RATE_CHANGE('q'), WRITE_DATA('d'), STOP('s'),
