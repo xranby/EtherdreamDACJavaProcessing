@@ -332,7 +332,6 @@ class Etherdream implements Runnable {
                     case INIT: {
                         // Send ping using TCP port 7765
                         DACResponse r = write(Command.PING);
-                        System.out.println(r);
 
                         write(Command.VERSION);
 
@@ -345,7 +344,8 @@ class Etherdream implements Runnable {
                         frame = getFrame();
                         write(Command.WRITE_DATA, frame);
                         
-                        write(Command.BEGIN_PLAYBACK, 0, dacBroadcast.max_point_rate);
+                        r = write(Command.BEGIN_PLAYBACK, 0, dacBroadcast.max_point_rate);
+                        System.out.println(r);
                         state = State.WRITE_DATA;
                         break;
                     }
