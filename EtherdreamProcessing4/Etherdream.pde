@@ -149,27 +149,23 @@ class Etherdream implements Runnable {
                 System.out.println("Version: " + versionString);
                 return null;
             default:
-                System.out.print("cmd: "+((char) cmd.command)+" ");
                 output.write(cmd.bytes());
                 return readResponse(cmd);
         }
     }
 
     DACResponse write(Command cmd, int... data) throws IOException {
-        System.out.print("cmd: "+((char) cmd.command)+" ");
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
         return readResponse(cmd);
     }
 
     DACResponse write(Command cmd, DACPoint... data) throws IOException {
-        System.out.print("cmd: "+((char) cmd.command)+" ");
         DACResponse response = null;
 
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
         response = readResponse(cmd);
-        System.out.println("buffered "+response.buffer_fullness);
     
         return response;
 
@@ -345,8 +341,7 @@ class Etherdream implements Runnable {
                         }
 
                         write(Command.PREPARE_STREAM);
-                  
-                        System.out.println("Filling initial buffer");
+
                         frame = getFrame();
                         write(Command.WRITE_DATA, frame);
                         
@@ -357,7 +352,6 @@ class Etherdream implements Runnable {
                     case WRITE_DATA:{
                         DACResponse r = write(Command.PING);
                         if(r.buffer_fullness<(dacBroadcast.buffer_capacity-frame.length)){
-                            System.out.println(r);
                             frame = getFrame();
                             write(Command.WRITE_DATA, frame);
                         }
