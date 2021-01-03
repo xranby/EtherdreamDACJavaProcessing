@@ -476,8 +476,8 @@ public class Etherdream implements Runnable {
              *     0,     0, 27400  only dimmed blue
              */
 
-            result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/10000000.0)) / 96.0)), (int) (32767 * Math.cos(i / 24.0)),
-            26200,     0,     0);
+            result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/15000000.0)) / 96.0)), (int) (32767 * Math.cos(i / 24.0)),
+            26800,     26800,     27900);
         }
         return result;
     }
