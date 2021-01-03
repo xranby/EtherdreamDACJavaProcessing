@@ -127,7 +127,7 @@ public class Etherdream implements Runnable {
     }
 
     enum State {
-        GET_BROADCAST, INIT, WRITE_DATA, BEGIN_PLAYBACK, IDLE;
+        STARTUP, GET_BROADCAST, INIT, WRITE_DATA;
     }
 
     enum Command {
@@ -215,41 +215,34 @@ public class Etherdream implements Runnable {
         }
     }
 
-    volatile State state = State.GET_BROADCAST;
-    OutputStream output = null;
-    InputStream input = null;
-
     DACResponse write(Command cmd) throws IOException {
         switch (cmd) {
             case PING:
-                System.out.println(((char) cmd.command));
                 output.write(cmd.bytes());
                 DACResponse r = readResponse(cmd);
-                System.out.println(r);
                 return r;
             case VERSION:
-                System.out.println(((char) cmd.command));
                 output.write(cmd.bytes());
                 byte[] version = input.readNBytes(32);
                 String versionString = new String(version).replace("\0", "").strip();
                 System.out.println("Version: " + versionString);
                 return null;
             default:
-                System.out.println(((char) cmd.command));
+                System.out.print("cmd: "+((char) cmd.command)+" ");
                 output.write(cmd.bytes());
                 return readResponse(cmd);
         }
     }
 
     DACResponse write(Command cmd, int... data) throws IOException {
-        System.out.println(((char) cmd.command));
+        System.out.print("cmd: "+((char) cmd.command)+" ");
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
         return readResponse(cmd);
     }
 
     DACResponse write(Command cmd, DACPoint... data) throws IOException {
-        System.out.println(((char) cmd.command));
+        System.out.print("cmd: "+((char) cmd.command)+" ");
         DACResponse response = null;
 
         byte[] bytes = cmd.bytes(data);
@@ -289,6 +282,35 @@ public class Etherdream implements Runnable {
         }
 
         return dac_response;
+    }
+
+    class DACBroadcast {
+        /*
+         * struct j4cDAC_broadcast { uint8_t mac_address[6]; uint16_t hw_revision;
+         * uint16_t sw_revision; uint16_t buffer_capacity; uint32_t max_point_rate;
+         * struct dac_status status; };
+         */
+        
+        public final byte[] mac_address;
+        public final int 
+        /* uint16_t */   hw_revision, sw_revision, buffer_capacity, max_point_rate;
+
+        DACBroadcast(byte[] dac_broadcast){
+            final ByteBuffer bb = ByteBuffer.wrap(dac_broadcast);
+            bb.order(ByteOrder.LITTLE_ENDIAN);
+
+            mac_address = new byte[]{bb.get(),bb.get(),bb.get(),bb.get(),bb.get(),bb.get()};
+            /* uint16_t */ 
+            hw_revision = bb.getShort()&0xFFFF;
+            sw_revision = bb.getShort()&0xFFFF;
+            buffer_capacity = bb.getShort()&0xFFFF;
+            max_point_rate = bb.getShort()&0xFFFF;
+        }
+
+        public String toString(){
+            return " hw_revision: "+hw_revision+ " sw_revision: "+sw_revision+
+                   "\n buffer_capacity: "+buffer_capacity+" max_point_rate: "+max_point_rate;
+        }
     }
 
     class DACResponse {
@@ -334,16 +356,22 @@ public class Etherdream implements Runnable {
         }
     }
 
+    volatile State state = State.GET_BROADCAST;
+    OutputStream output = null;
+    InputStream input = null;
+
     @Override
     public void run() {
+        State lastState = State.STARTUP;
+        DACBroadcast dacBroadcast = null;
         InetAddress etherdreamAddress = null;
-
         Socket socket = null;
 
-        boolean readTwice = false;
-
         while (true) {
-            System.out.println("state " + state);
+            if(lastState!=state){
+                lastState=state;
+                System.out.println("state: " +lastState+ " -> "+ state);
+            }
             try {
                 switch (state) {
                     case GET_BROADCAST: {
@@ -356,14 +384,8 @@ public class Etherdream implements Runnable {
                             DatagramPacket response = new DatagramPacket(buffer, buffer.length);
                             inSocket.receive(response);
 
-                            /*
-                             * struct j4cDAC_broadcast { uint8_t mac_address[6]; uint16_t hw_revision;
-                             * uint16_t sw_revision; uint16_t buffer_capacity; uint32_t max_point_rate;
-                             * struct dac_status status; };
-                             */
-
-                            byte[] broadcast = Arrays.copyOfRange(buffer, 0, response.getLength());
-
+                            dacBroadcast = new DACBroadcast(Arrays.copyOfRange(buffer, 0, response.getLength()));
+                            System.out.println(dacBroadcast);
                             etherdreamAddress = response.getAddress();
 
                             if (etherdreamAddress != null) {
@@ -372,8 +394,6 @@ public class Etherdream implements Runnable {
                                         socket.close();
                                         socket = null;
                                     } catch (IOException e1) {
-                                        // TODO Auto-generated catch block
-                                        e1.printStackTrace();
                                     }
                                 }
                                 socket = new Socket(etherdreamAddress, 7765);
@@ -394,6 +414,7 @@ public class Etherdream implements Runnable {
                     case INIT: {
                         // Send ping using TCP port 7765
                         DACResponse r = write(Command.PING);
+                        System.out.println(r);
 
                         write(Command.VERSION);
 
@@ -412,7 +433,8 @@ public class Etherdream implements Runnable {
                     }
                     case WRITE_DATA:{
                         DACResponse r = write(Command.PING);
-                        if(r.buffer_fullness<(3778-2400)){
+                        if(r.buffer_fullness<(dacBroadcast.buffer_capacity-2400)){
+                            System.out.println(r);
                             write(Command.WRITE_DATA, getFrame());
                         }
                         break;
