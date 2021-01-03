@@ -28,6 +28,8 @@ import java.util.Arrays;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import java.lang.reflect.Method;
+
     enum State {
         STARTUP, GET_BROADCAST, INIT, WRITE_DATA;
     }
@@ -119,9 +121,17 @@ import java.nio.ByteOrder;
 
 class Etherdream implements Runnable {
 
-    
+    Method method_get_frame = null;
+    Object processing = null;
 
-    public Etherdream() {
+    public Etherdream(Object processing) {
+        this.processing = processing;
+        try {
+           method_get_frame = processing.getClass().getMethod("getDACPoints", new Class[] {});
+        } catch(Exception e) {
+           // no such method, or an error.. which is fine, just ignore
+        }
+        
         final Thread thread = new Thread(this);
         thread.start();
     }
@@ -370,6 +380,13 @@ class Etherdream implements Runnable {
     }
 
     DACPoint[] getFrame() {
+        if(method_get_frame!=null){
+            try {
+                return (DACPoint[]) method_get_frame.invoke(processing, new Object[] {});
+            } catch(Exception e) {
+                e.printStackTrace();
+            }
+        } 
         DACPoint[] result = new DACPoint[600];
 
         for (int i = 0; i < 600; i++) {
@@ -387,7 +404,7 @@ class Etherdream implements Runnable {
              *     0,     0, 27400  only dimmed blue
              */
 
-            result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/15000000.0)) / 96.0)), (int) (32767 * Math.cos(i / 24.0)),
+            result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/15000000.0)) / 24.0)), (int) (32767 * Math.cos(i / 24.0)),
             26800,     26800,     27900);
         }
         return result;
