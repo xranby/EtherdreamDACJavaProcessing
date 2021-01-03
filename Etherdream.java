@@ -459,8 +459,9 @@ public class Etherdream implements Runnable {
     }
 
     DACPoint[] getFrame() {
-        DACPoint[] result = new DACPoint[2400];
-        for (int i = 0; i < 2400; i++) {
+        DACPoint[] result = new DACPoint[450];
+
+        for (int i = 0; i < 450; i++) {
 
             /* x,y   int min -32767 to max 32767
              * r,g,b int min 0 to max 65535
