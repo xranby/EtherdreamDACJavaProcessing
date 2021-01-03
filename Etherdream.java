@@ -429,7 +429,7 @@ public class Etherdream implements Runnable {
                         frame = getFrame();
                         write(Command.WRITE_DATA, frame);
                         
-                        write(Command.BEGIN_PLAYBACK, 0, 24000);
+                        write(Command.BEGIN_PLAYBACK, 0, dacBroadcast.max_point_rate);
                         state = State.WRITE_DATA;
                         break;
                     }
