@@ -49,3 +49,4 @@ Advanced example:
 R-WDML (Re-wake the Dead with Musical Light) for Processing 4
 laser visualization for midi playback demonstration:
 https://www.instagram.com/p/CJk7w8KAcH2/
+![Etherdream DAC Java and Processing R_WDML example](<EtherdreamDACJavaProcessing_R_WDML.png>)
