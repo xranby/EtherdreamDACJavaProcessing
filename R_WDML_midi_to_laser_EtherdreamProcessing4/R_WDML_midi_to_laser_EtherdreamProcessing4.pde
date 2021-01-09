@@ -13,11 +13,18 @@ import java.util.Collections;
 
 MidiBus myBus; // The MidiBus
 
-ConcurrentHashMap<Integer,Integer> h = new ConcurrentHashMap<Integer,Integer>();
+// The demonstation has 3 threads, the midi thread, the draw thread and the Etherdream thread
+// The ConcurrentHashMaps allow storing data about each received midi pitch, piano key,
+// and sharing the data safely with the draw and Etherdream thread.
+ConcurrentHashMap<Integer,Integer> pitchVelocityMap = new ConcurrentHashMap<Integer,Integer>();
+
+// We stora a float value for each pitch that is used to fade from key on to key off
+// and rapid fade when the key is released, this allows the light to mimic the fade of the sound.
+ConcurrentHashMap<Integer,Float> pitchFadeMap = new ConcurrentHashMap<Integer,Float>();
 
 void setup() {
   
-  fullScreen();
+  fullScreen(P3D);
   background(0);
 
   MidiBus.list(); // List all available Midi devices on STDOUT. This will show each device's index and name.
@@ -64,9 +71,7 @@ DACPoint[] getDACPoints() {
             0,     26800,     0);
    }
    
-    List<Integer> keys = Collections.list(h.keys());
-  
-    h.values();
+    List<Integer> keys = Collections.list(pitchVelocityMap.keys());
   
     int i = 0;
     
@@ -74,13 +79,17 @@ DACPoint[] getDACPoints() {
     int pointsPerKey = 600/(numKeys+1);
     for(Integer k : keys){
     
-      Float value = new Float(h.getOrDefault(k,Integer.valueOf(0)).intValue());
+      Float faded = new Float(pitchFadeMap.getOrDefault(k,Float.valueOf(0)).floatValue());
     
       color c = octaveToColor(k/12);
+      colorMode(RGB, 27000+(k*3));
+      int red = (int)red(c);
+      int green = (int)green(c);
+      int blue = (int)blue(c);
       for(int j=0;j<pointsPerKey;j++){
-        if(value!=0){
-             result[i] = new DACPoint((int) (32767 * Math.sin((i) / 24.0+((value+1)/10.0))), (int) (32767 * Math.cos(i / 24.0)),
-             c,     26800,     0);
+        if(faded!=Float.valueOf(0)){
+             result[i] = new DACPoint((int) (32767 * Math.sin((i) / 24.0+(((faded+1)/5.0)/10.0))), (int) (32767 * Math.cos(i / 24.0)),
+             red,     green,     blue);
         }
         i++;
       }
@@ -93,13 +102,24 @@ DACPoint[] getDACPoints() {
 void draw() {
   background(0);
   
-  List<Integer> keys = Collections.list(h.keys());
+  List<Integer> keys = Collections.list(pitchVelocityMap.keys());
   
-  h.values();
+  // fade down to zero after key hit
+  for(Integer k : keys){
+    Float value = pitchFadeMap.getOrDefault(k,Float.valueOf(0));
+    Integer on = pitchVelocityMap.getOrDefault(k,Integer.valueOf(0));
+    if(on>0){
+      value=max(value-0.001*(k+1),0);
+    } else {
+      value=max(value-(1.2+(k/20.0)),0);
+    }
+    pitchFadeMap.put(k,value);
+  }
   
+  // visualize a line for each key, colored by the octave
   for(Integer k : keys){
     
-    Integer value = h.getOrDefault(k,Integer.valueOf(0));
+    Float value = pitchFadeMap.getOrDefault(k,Float.valueOf(0));
     
     if(value!=0){
       stroke(octaveToColor((k/12)));
@@ -121,7 +141,8 @@ void noteOn(int channel, int pitch, int velocity) {
   println("Pitch:"+pitch);
   println("Velocity:"+velocity);*/
   
-  h.put(Integer.valueOf(pitch),Integer.valueOf(velocity));
+  pitchVelocityMap.put(Integer.valueOf(pitch),Integer.valueOf(velocity));
+  pitchFadeMap.put(Integer.valueOf(pitch),Float.valueOf((float)velocity));
 }
 
 void noteOff(int channel, int pitch, int velocity) {
@@ -134,7 +155,7 @@ void noteOff(int channel, int pitch, int velocity) {
   println("Pitch:"+pitch);
   println("Velocity:"+velocity);
   */
-  h.put(Integer.valueOf(pitch),Integer.valueOf(0));
+  pitchVelocityMap.put(Integer.valueOf(pitch),Integer.valueOf(0));
 }
 
 void controllerChange(int channel, int number, int value) {
@@ -149,16 +170,18 @@ void controllerChange(int channel, int number, int value) {
 
 void rawMidi(byte[] data) { // You can also use rawMidi(byte[] data, String bus_name)
 
-  myBus.sendMessage((int)(data[0] & 0xF0),0,(int)(data[1] & 0xFF),(int)(data[2] & 0xFF));
-
-}
-
-void delay(int time) {
-  int current = millis();
-  while (millis () < current+time) Thread.yield();
+  // forward incomming midi in to midi out
+  if(data.length>=3){
+    myBus.sendMessage((int)(data[0] & 0xF0),0,(int)(data[1] & 0xFF),(int)(data[2] & 0xFF));
+  }
+  
+  if(data.length==2){
+    myBus.sendMessage((int)(data[0] & 0xF0),0,(int)(data[1] & 0xFF));
+  }
 }
 
 color octaveToColor(Integer o) {
+  colorMode(RGB, 255);
   switch(o){
     case 1:
         return color(255,0,0); // red
