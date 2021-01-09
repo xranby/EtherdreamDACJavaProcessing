@@ -219,10 +219,12 @@ public class Etherdream implements Runnable {
         switch (cmd) {
             case PING:
                 output.write(cmd.bytes());
+                output.flush();
                 DACResponse r = readResponse(cmd);
                 return r;
             case VERSION:
                 output.write(cmd.bytes());
+                output.flush();
                 byte[] version = input.readNBytes(32);
                 String versionString = new String(version).replace("\0", "").strip();
                 System.out.println("Version: " + versionString);
@@ -230,6 +232,7 @@ public class Etherdream implements Runnable {
             default:
                 System.out.print("cmd: "+((char) cmd.command)+" ");
                 output.write(cmd.bytes());
+                output.flush();
                 return readResponse(cmd);
         }
     }
@@ -238,6 +241,7 @@ public class Etherdream implements Runnable {
         System.out.print("cmd: "+((char) cmd.command)+" ");
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
+        output.flush();
         return readResponse(cmd);
     }
 
@@ -247,6 +251,7 @@ public class Etherdream implements Runnable {
 
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
+        output.flush();
         response = readResponse(cmd);
         System.out.println("buffered "+response.buffer_fullness);
     

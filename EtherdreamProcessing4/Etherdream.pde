@@ -138,18 +138,16 @@ class Etherdream implements Runnable {
 
         DACResponse write(Command cmd) throws IOException {
         switch (cmd) {
-            case PING:
-                output.write(cmd.bytes());
-                DACResponse r = readResponse(cmd);
-                return r;
             case VERSION:
                 output.write(cmd.bytes());
+                output.flush();
                 byte[] version = input.readNBytes(32);
                 String versionString = new String(version).replace("\0", "").strip();
                 System.out.println("Version: " + versionString);
                 return null;
             default:
                 output.write(cmd.bytes());
+                output.flush();
                 return readResponse(cmd);
         }
     }
@@ -157,6 +155,7 @@ class Etherdream implements Runnable {
     DACResponse write(Command cmd, int... data) throws IOException {
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
+        output.flush();
         return readResponse(cmd);
     }
 
@@ -165,6 +164,7 @@ class Etherdream implements Runnable {
 
         byte[] bytes = cmd.bytes(data);
         output.write(bytes);
+        output.flush();
         response = readResponse(cmd);
     
         return response;
