@@ -433,7 +433,8 @@ public class Etherdream implements Runnable {
                         System.out.println("Filling initial buffer");
                         frame = getFrame();
                         write(Command.WRITE_DATA, frame);
-                        
+                        frame = getFrame(); // buffer next frame
+
                         write(Command.BEGIN_PLAYBACK, 0, dacBroadcast.max_point_rate);
                         state = State.WRITE_DATA;
                         break;
@@ -442,8 +443,8 @@ public class Etherdream implements Runnable {
                         DACResponse r = write(Command.PING);
                         if(r.buffer_fullness<(dacBroadcast.buffer_capacity-frame.length)){
                             System.out.println(r);
-                            frame = getFrame();
                             write(Command.WRITE_DATA, frame);
+                            frame = getFrame(); // buffer next frame
                         }
                         break;
                     }
