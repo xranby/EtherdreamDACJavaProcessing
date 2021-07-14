@@ -468,7 +468,8 @@ public class Etherdream implements Runnable {
         DACPoint[] result = new DACPoint[600];
 
         for (int i = 0; i < 600; i++) {
-
+            int x;
+            int y;
             /* x,y   int min -32767 to max 32767
              * r,g,b int min 0 to max 65535
              *
@@ -481,8 +482,24 @@ public class Etherdream implements Runnable {
              *     0, 26500,     0  only dimmed green
              *     0,     0, 27400  only dimmed blue
              */
-
-            result[i] = new DACPoint((int) (185300 * Math.sin((i+(System.nanoTime()/13050000.0)) / 2225.0)), (int) (32200 * Math.cos(i / 115.0)),
+          int max = 32767;
+          int middle = 12767;
+          
+     x =0; y=max;   
+ if(i>50){ x =middle; y=0; }
+  if(i>100){ x =max; y=0; }
+   if(i>150){ x = middle; y=-middle; }
+    if(i>200){ x = max; y=-max; }
+     if(i>250){ x =0; y=-middle; }
+     
+     if(i>300){ x =-max; y=-max; }
+     
+     if(i>350){ x =-middle; y=-middle; }
+     
+     if(i>400){ x =-max; y=0; }
+     
+     if(i>450){ x =-middle; y=0; }
+            result[i] = new DACPoint((int) (x), (int) (y),
             62400,     60800,     40000);
         }
         return result;
