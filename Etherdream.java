@@ -499,7 +499,7 @@ public class Etherdream implements Runnable {
      if(i>400){ x =-max; y=0; }
      
      if(i>450){ x =-middle; y=0; }
-            result[i] = new DACPoint((int) (x), (int) (y),
+            result[i] = new DACPoint((int) (x*Math.sin(System.nanoTime()/1000050000.0)), (int) (y*Math.cos(System.nanoTime()/1000050000.0)),
             62400,     60800,     40000);
         }
         return result;
