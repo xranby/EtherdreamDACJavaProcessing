@@ -34,7 +34,7 @@ public class Etherdream implements Runnable {
      * to LITTLE_ENDIAN byte[] format used by the Etherdream DAC
      * inspired by superbobs ByteUtil https://gist.github.com/superbob/6548493
      */ 
-    public static byte[] toBytes(final char... charArray) {
+    public static byte[] toBytes(final char... charArray) { //1 5 5 6 1 
         final ByteBuffer bb = ByteBuffer.allocate((charArray.length * 2));
         bb.order(ByteOrder.LITTLE_ENDIAN);
         for (final char val : charArray) {
@@ -482,8 +482,8 @@ public class Etherdream implements Runnable {
              *     0,     0, 27400  only dimmed blue
              */
 
-            result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/15000000.0)) / 96.0)), (int) (32767 * Math.cos(i / 24.0)),
-            26800,     26800,     27900);
+            result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/55555.0)) / 96.0)), (int) (15822 * Math.cos(i / 96.0)),
+            152,     26800,     121);
         }
         return result;
     }
