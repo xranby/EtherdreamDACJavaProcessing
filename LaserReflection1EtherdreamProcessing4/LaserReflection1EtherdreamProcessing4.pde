@@ -54,8 +54,11 @@ void setup() {
   // register Etherdream callback to this class
   // Etherream will call getDACPoints when it require new
   // laser points
-  Etherdream laser = new Etherdream(this);
+  laser = new Etherdream(this);
+  laser.debug=true;
 }
+
+Etherdream laser;
 
 // Laser bounary constants
 final int mi = -32767;
@@ -106,14 +109,14 @@ void draw() {
   p.add( new Point(mi,mx,0,0,0) );      // blank line
   
   // draw background
-  fill(0, 12);
-  noStroke();
+  fill(0);
+/*  noStroke();
   rect(0, 0, width, height);
 
   // draw base
   fill(200);
   quad(base1.x, base1.y, base2.x, base2.y, base2.x, height, 0, height);
-
+*/
   // beam base to laser
   p.add(  new Point(xToLaserX((int)base1.x),yToLaserY((int)base1.y),0,0,0) );      // laser blank line, start of red base line
   p.add(  new Point(xToLaserX((int)base2.x),yToLaserY((int)base2.y),on,0,0) );     // laser draw the red base line to here
@@ -122,12 +125,12 @@ void draw() {
   PVector baseDelta = PVector.sub(base2, base1);
   baseDelta.normalize();
   PVector normal = new PVector(-baseDelta.y, baseDelta.x);
-
+/*
   // draw ellipse
   noStroke();
   fill(255);
   ellipse(position.x, position.y, r*2, r*2);
-  
+  */
   // laser blank line to possition before ball move
   p.add(  new Point(xToLaserX((int)position.x),yToLaserY((int)position.y),0,0,0) );      // blank line
   
@@ -157,6 +160,8 @@ void draw() {
    p.add(laserfade.get(100));
    p.add(laserfade.get(0));
    */
+   laserpoint =p ;
+   laser.paint();
  }
  
  p.add( new Point(mi,mx,0 ,0 ,0 ) );    // blank line to start of red line to calm down galvoimeters efore next frame
