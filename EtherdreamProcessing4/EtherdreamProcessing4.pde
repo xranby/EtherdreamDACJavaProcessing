@@ -28,9 +28,8 @@ DACPoint[] getDACPoints() {
          *     0,     0, 27400  only dimmed blue
          */
 
-        result[i] = new DACPoint((int) (32767 * Math.sin((i+(System.nanoTime()/15000000.0)) / 96.0)), (int) (32767 * Math.cos(i / 24.0)),
-            0,     26800,     0);
-   }
-   
+        result[i] = new DACPoint((int) (32767 * Math.sin((i / 12.0))), (int) (32767 * Math.cos(i / 24.0)),
+                                                    0 /* red */,     65535 /* green */,     0 /* blue */);
+   }  
    return result;
 }
