@@ -38,7 +38,7 @@ import java.nio.ByteOrder;
 import java.lang.reflect.Method;
 
 private float maxBufferUtilization = 0.65f;  // Only use 65% of buffer capacity  
-private int maxPointRate = 25000;  // Reduced from 30000
+private int maxPointRate = 15000;  // Reduced from 30000
 private int maxRetries = 5;        // Increased retry limit
 private int lastBufferFullness = 0;
 private boolean throttlingActive = false;
