@@ -259,12 +259,17 @@ class Etherdream implements Runnable {
      * @return DAC response or null for version command
      * @throws IOException If communication fails
      */
-    DACResponse write(Command cmd) throws IOException {
+    /**
+ * Sends a command to the DAC and reads the response with improved timeout handling
+ */
+DACResponse write(Command cmd) throws IOException {
+    try {
         switch (cmd) {
             case VERSION:
                 output.write(cmd.bytes());
                 output.flush();
-                byte[] version = input.readNBytes(32);
+                // Use a safe read method with timeout handling
+                byte[] version = safeReadBytes(32);
                 String versionString = new String(version).replace("\0", "").strip();
                 log("DAC Version: " + versionString);
                 return null;
@@ -273,7 +278,45 @@ class Etherdream implements Runnable {
                 output.flush();
                 return readResponse(cmd);
         }
+    } catch (IOException e) {
+        log("IO Error during command " + cmd + ": " + e.getMessage());
+        throw e;
     }
+}
+
+/**
+ * Safely reads bytes with better timeout handling
+ */
+private byte[] safeReadBytes(int numBytes) throws IOException {
+    byte[] buffer = new byte[numBytes];
+    int totalBytesRead = 0;
+    int timeout = 0;
+    
+    while (totalBytesRead < numBytes) {
+        if (input.available() > 0) {
+            int bytesRead = input.read(buffer, totalBytesRead, numBytes - totalBytesRead);
+            if (bytesRead == -1) {
+                throw new IOException("End of stream reached");
+            }
+            totalBytesRead += bytesRead;
+            timeout = 0; // Reset timeout counter
+        } else {
+            // Short delay to prevent CPU thrashing
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                // Ignore
+            }
+            
+            timeout++;
+            if (timeout > 3000) { // 3 second timeout
+                throw new SocketTimeoutException("Read timed out after 3 seconds");
+            }
+        }
+    }
+    
+    return buffer;
+}
 
     /**
      * Sends a command with integer parameters to the DAC
@@ -320,8 +363,14 @@ class Etherdream implements Runnable {
      * @return Parsed DAC response
      * @throws IOException If communication fails
      */
-    DACResponse readResponse(Command cmd) throws IOException {
-        byte[] responseBytes = input.readNBytes(22);
+/**
+ * Reads and parses a response from the DAC with improved error handling
+ */
+DACResponse readResponse(Command cmd) throws IOException {
+    try {
+        // Use safe read method with timeout handling
+        byte[] responseBytes = safeReadBytes(22);
+        
         if (responseBytes.length < 22) {
             throw new IOException("Incomplete response from DAC: " + responseBytes.length + " bytes");
         }
@@ -351,7 +400,6 @@ class Etherdream implements Runnable {
                 log("Unexpected response from wrong command: " + ((char) dac_response.command) + 
                     " (" + dac_response.command + "), expected: " + ((char) cmd.command) + 
                     " (" + cmd.command + ")");
-                log("Response for " + ((char) cmd.command) + ": " + dac_response);
             }
             failedFrames.incrementAndGet();
             state = State.ERROR_RECOVERY;
@@ -362,7 +410,11 @@ class Etherdream implements Runnable {
         }
 
         return dac_response;
+    } catch (IOException e) {
+        log("IO Error during response read: " + e.getMessage());
+        throw e;
     }
+}
 
     /**
      * Information about a DAC received from its broadcast
@@ -578,34 +630,48 @@ class Etherdream implements Runnable {
                     }
                     
                     // Normal operation - keep sending data
-                    case WRITE_DATA: {
-                        // Check DAC status
-                        DACResponse r = write(Command.PING);
-                        
-                        // Determine buffer capacity (use default 1800 if not known)
-                        int bufferCapacity = (dacBroadcast != null) ? 
-                            dacBroadcast.buffer_capacity : 1800;
-                            
-                        // If there's room in the buffer, send more frames
-                        if (r.buffer_fullness < (bufferCapacity - frame.length)) {
-                            if (frame != null && frame.length > 0) {
-                                write(Command.WRITE_DATA, frame);
-                                
-                                // Get next frame
-                                frame = getFrame();
-                                if (frame == null || frame.length == 0) {
-                                    frame = getTestPattern(); // Fallback to test pattern
-                                }
-                            } else {
-                                log("Warning: Empty frame in WRITE_DATA state");
-                                frame = getTestPattern(); // Fallback to test pattern
-                            }
-                        } else {
-                            // Buffer is full, wait a bit
-                            Thread.sleep(5);
-                        }
-                        break;
-                    }
+                    // Update the WRITE_DATA case to this version:
+    case WRITE_DATA: {
+        try {
+            // Check DAC status with shorter timeout to avoid hanging
+            socket.setSoTimeout(1000); // 1 second timeout for PING
+            DACResponse r = write(Command.PING);
+            
+            // Determine buffer capacity (use default 1800 if not known)
+            int bufferCapacity = (dacBroadcast != null) ? 
+                dacBroadcast.buffer_capacity : 1800;
+                
+            // Make sure we have a valid frame
+            if (frame == null || frame.length == 0) {
+                log("Empty frame in WRITE_DATA state, generating test pattern");
+                frame = getTestPattern();
+            }
+            
+            // If there's room in the buffer, send more frames
+            if (r.buffer_fullness < (bufferCapacity - frame.length)) {
+                // Log frame details for debugging
+                log("Sending frame with " + frame.length + " points, buffer: " + 
+                    r.buffer_fullness + "/" + bufferCapacity);
+                
+                write(Command.WRITE_DATA, frame);
+                
+                // Get next frame immediately to be ready
+                frame = getFrame();
+            } else {
+                // Buffer is full, wait a bit
+                log("Buffer full (" + r.buffer_fullness + "/" + bufferCapacity + 
+                    "), waiting before sending more points");
+                Thread.sleep(20);  // Slightly longer delay
+            }
+            
+            // Reset timeout back to normal for other operations
+            socket.setSoTimeout(3000);
+        } catch (SocketTimeoutException ste) {
+            log("Ping timeout in WRITE_DATA, entering recovery");
+            state = State.ERROR_RECOVERY;
+        }
+        break;
+    }
                     
                     // Error recovery
                     case ERROR_RECOVERY: {
@@ -688,49 +754,66 @@ class Etherdream implements Runnable {
      * 
      * @return Array of points to display
      */
-    DACPoint[] getFrame() {
-        // First try to get a frame from the queue
-        DACPoint[] queuedFrame = frameQueue.poll();
-        if (queuedFrame != null && queuedFrame.length > 0) {
-            return queuedFrame;
-        }
-        
-        // If no frames in queue, get a frame from the callback
-        if (method_get_frame != null) {
-            try {
-                DACPoint[] result = (DACPoint[]) method_get_frame.invoke(processing, new Object[] {});
-                if (result != null && result.length > 0) {
-                    return result;
-                }
-            } catch(Exception e) {
-                log("Error getting frame: " + e.getMessage());
-            }
-        }
-        
-        // Fall back to a simple test pattern if no callback available
-        return getTestPattern();
+
+
+/**
+ * Get the next frame to display with more robust handling and logging
+ */
+DACPoint[] getFrame() {
+    // First try to get a frame from the queue
+    DACPoint[] queuedFrame = frameQueue.poll();
+    if (queuedFrame != null && queuedFrame.length > 0) {
+        log("Using queued frame with " + queuedFrame.length + " points");
+        return queuedFrame;
     }
     
-    /**
-     * Generate a test pattern
-     * 
-     * @return Array of points forming a test pattern
-     */
-    DACPoint[] getTestPattern() {
-        long now = System.nanoTime() / 15000000;
-        DACPoint[] result = new DACPoint[maxPointsPerFrame]; // Use configured max points
-
-        for (int i = 0; i < result.length; i++) {
-            /* x,y   int min -32767 to max 32767
-             * r,g,b int min 0 to max 65535
-             */
-            result[i] = new DACPoint(
-                (int) (32767 * Math.sin((i + now) / 24.0)), 
-                (int) (32767 * Math.cos(i / 24.0)),
-                65535, 65535, 65535);
+    // If no frames in queue, get a frame from the callback
+    if (method_get_frame != null) {
+        try {
+            DACPoint[] result = (DACPoint[]) method_get_frame.invoke(processing, new Object[] {});
+            if (result != null && result.length > 0) {
+                log("Got frame from callback with " + result.length + " points");
+                return result;
+            } else {
+                log("Warning: Callback returned null or empty frame");
+            }
+        } catch(Exception e) {
+            log("Error getting frame from callback: " + e.getMessage());
+            e.printStackTrace();
         }
-        return result;
+    } else {
+        log("No frame callback method available");
     }
+    
+    // Fall back to a simple test pattern if no callback available
+    log("Generating test pattern frame");
+    return getTestPattern();
+}
+    
+    
+/**
+ * Generate a test pattern with explicit points count for diagnostics
+ */
+DACPoint[] getTestPattern() {
+    // Create a simple circle as a test pattern
+    int points = 180;  // Reduce from 600 for more stable operation
+    DACPoint[] result = new DACPoint[points];
+    
+    log("Generating test pattern with " + points + " points");
+    
+    long now = System.nanoTime() / 15000000;
+    for (int i = 0; i < points; i++) {
+        // Create a simple circle pattern instead of the complex sin/cos
+        float angle = (float)(i * 2 * Math.PI / points);
+        result[i] = new DACPoint(
+            (int)(25000 * Math.cos(angle)),  // 75% of max radius for safety
+            (int)(25000 * Math.sin(angle)),
+            65535, 65535, 65535              // Full white
+        );
+    }
+    
+    return result;
+}
     
     /**
      * Queue a frame for display
