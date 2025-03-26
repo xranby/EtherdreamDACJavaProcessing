@@ -25,7 +25,7 @@ float fps = 0;
 int pointsPerSecond = 0;
 
 // Buffer size parameters - smaller buffers for complex tests
-int maxBufferSize = 100;    // Maximum points to send at once
+int maxBufferSize = 80;    // Maximum points to send at once
 int highComplexityMaxPoints = 60;  // Even smaller buffer for complex tests
 
 // Store uncoverted laser points updated by draw()

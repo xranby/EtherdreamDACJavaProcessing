@@ -774,8 +774,8 @@ void drawSequentialTests(ArrayList<Point> p) {
   int testDuration = cycleLength / 8;  // duration of each test
   
   // Calculate which test to show
-  int frameCount = frameCount % cycleLength;
-  int testIndex = frameCount / testDuration + 1;
+  int frameCCount = frameCount % cycleLength;
+  int testIndex = frameCCount / testDuration + 1;
   
   // Run the current test
   switch(testIndex) {

@@ -37,14 +37,6 @@ import java.nio.ByteOrder;
 
 import java.lang.reflect.Method;
 
-private float maxBufferUtilization = 0.95f;
-private int maxPointRate = 30000;
-private int maxRetries = 5;        // Increased retry limit
-private int lastBufferFullness = 0;
-private boolean throttlingActive = false;
-private long lastSuccessfulPingTime = 0;
-private long pingTimeoutThreshold = 5000; // 5 seconds
-
 /**
  * DAC state machine states
  */
@@ -200,6 +192,15 @@ class Etherdream implements Runnable {
     private int bufferLowWatermark = 100;     // Start sending more data when buffer drops below this
     private boolean debugOutput = true;       // Enable/disable debug messages
     
+    // Buffer management and recovery enhancements
+    private float maxBufferUtilization = 0.65f;  // Only use 65% of buffer capacity
+    private int maxPointRate = 25000;            // Reduced from 30000
+    private int maxRetries = 5;                  // Increased retry limit
+    private int lastBufferFullness = 0;
+    private boolean throttlingActive = false;
+    private long lastSuccessfulPingTime = 0;
+    private long pingTimeoutThreshold = 5000;    // 5 seconds
+    
     // Internal state tracking
     private AtomicInteger failedFrames = new AtomicInteger(0);
     private AtomicInteger successfulFrames = new AtomicInteger(0);
@@ -243,13 +244,27 @@ class Etherdream implements Runnable {
     }
     
     /**
+     * Configure buffer management parameters
+     * 
+     * @param bufferUtilization Maximum buffer utilization (0.0-1.0)
+     * @param pointRate Maximum point rate
+     */
+    public void configureBuffer(float bufferUtilization, int pointRate) {
+        this.maxBufferUtilization = Math.max(0.1f, Math.min(0.9f, bufferUtilization));
+        this.maxPointRate = pointRate;
+        log("Buffer configuration updated: utilization=" + maxBufferUtilization + 
+            ", pointRate=" + maxPointRate);
+    }
+    
+    /**
      * Get current performance statistics
      * 
      * @return String containing performance information
      */
     public String getStats() {
-        return String.format("Frames: %d successful, %d failed, Queue: %d", 
-                             successfulFrames.get(), failedFrames.get(), frameQueue.size());
+        return String.format("Frames: %d successful, %d failed, Queue: %d, Buffer: %d", 
+                             successfulFrames.get(), failedFrames.get(), 
+                             frameQueue.size(), lastBufferFullness);
     }
     
     /**
@@ -261,70 +276,29 @@ class Etherdream implements Runnable {
     }
     
     /**
-     * Sends a command to the DAC and reads the response
-     * 
-     * @param cmd Command to send
-     * @return DAC response or null for version command
-     * @throws IOException If communication fails
+     * Sends a command to the DAC and reads the response with improved timeout handling
      */
-    /**
- * Sends a command to the DAC and reads the response with improved timeout handling
- */
-DACResponse write(Command cmd) throws IOException {
-    try {
-        switch (cmd) {
-            case VERSION:
-                output.write(cmd.bytes());
-                output.flush();
-                // Use a safe read method with timeout handling
-                byte[] version = safeReadBytes(32);
-                String versionString = new String(version).replace("\0", "").strip();
-                log("DAC Version: " + versionString);
-                return null;
-            default:
-                output.write(cmd.bytes());
-                output.flush();
-                return readResponse(cmd);
-        }
-    } catch (IOException e) {
-        log("IO Error during command " + cmd + ": " + e.getMessage());
-        throw e;
-    }
-}
-
-/**
- * Safely reads bytes with better timeout handling
- */
-private byte[] safeReadBytes(int numBytes) throws IOException {
-    byte[] buffer = new byte[numBytes];
-    int totalBytesRead = 0;
-    int timeout = 0;
-    
-    while (totalBytesRead < numBytes) {
-        if (input.available() > 0) {
-            int bytesRead = input.read(buffer, totalBytesRead, numBytes - totalBytesRead);
-            if (bytesRead == -1) {
-                throw new IOException("End of stream reached");
+    DACResponse write(Command cmd) throws IOException {
+        try {
+            switch (cmd) {
+                case VERSION:
+                    output.write(cmd.bytes());
+                    output.flush();
+                    // Use a safe read method with timeout handling
+                    byte[] version = safeReadBytes(32);
+                    String versionString = new String(version).replace("\0", "").strip();
+                    log("DAC Version: " + versionString);
+                    return null;
+                default:
+                    output.write(cmd.bytes());
+                    output.flush();
+                    return readResponse(cmd);
             }
-            totalBytesRead += bytesRead;
-            timeout = 0; // Reset timeout counter
-        } else {
-            // Short delay to prevent CPU thrashing
-            try {
-                Thread.sleep(1);
-            } catch (InterruptedException e) {
-                // Ignore
-            }
-            
-            timeout++;
-            if (timeout > 3000) { // 3 second timeout
-                throw new SocketTimeoutException("Read timed out after 3 seconds");
-            }
+        } catch (IOException e) {
+            log("IO Error during command " + cmd + ": " + e.getMessage());
+            throw e;
         }
     }
-    
-    return buffer;
-}
 
     /**
      * Sends a command with integer parameters to the DAC
@@ -365,64 +339,91 @@ private byte[] safeReadBytes(int numBytes) throws IOException {
     }
 
     /**
-     * Reads and parses a response from the DAC
-     * 
-     * @param cmd The command that was sent
-     * @return Parsed DAC response
-     * @throws IOException If communication fails
+     * Safely reads bytes with better timeout handling
      */
-/**
- * Reads and parses a response from the DAC with improved error handling
- */
-DACResponse readResponse(Command cmd) throws IOException {
-    try {
-        // Use safe read method with timeout handling
-        byte[] responseBytes = safeReadBytes(22);
+    private byte[] safeReadBytes(int numBytes) throws IOException {
+        byte[] buffer = new byte[numBytes];
+        int totalBytesRead = 0;
+        int timeout = 0;
         
-        if (responseBytes.length < 22) {
-            throw new IOException("Incomplete response from DAC: " + responseBytes.length + " bytes");
-        }
-        
-        DACResponse dac_response = new DACResponse(responseBytes);
-
-        // Handle emergency stop condition
-        if(dac_response.playback_state == 3) {
-            log("E-STOP detected: light_engine_flags=" + dac_response.light_engine_flags + 
-                " playback_flags=" + dac_response.playback_flags);
-            log("Response for " + ((char) cmd.command) + ": " + dac_response);
-        }
-
-        // Verify we got an ACK
-        if (dac_response.response != Command.ACK_RESPONSE.command) {
-            log("Unexpected response: " + ((char) dac_response.response) + " (" + dac_response.response + ")");
-            failedFrames.incrementAndGet();
-            state = State.ERROR_RECOVERY;
-        }
-
-        // Verify we got the response for the correct command
-        if (dac_response.command != cmd.command) {
-            if(dac_response.command == Command.EMERGENCY_STOP.command) {
-                log("E-STOP response: light_engine_flags=" + dac_response.light_engine_flags);
-                log("Response for " + ((char) cmd.command) + ": " + dac_response);
+        while (totalBytesRead < numBytes) {
+            if (input.available() > 0) {
+                int bytesRead = input.read(buffer, totalBytesRead, numBytes - totalBytesRead);
+                if (bytesRead == -1) {
+                    throw new IOException("End of stream reached");
+                }
+                totalBytesRead += bytesRead;
+                timeout = 0; // Reset timeout counter
             } else {
-                log("Unexpected response from wrong command: " + ((char) dac_response.command) + 
-                    " (" + dac_response.command + "), expected: " + ((char) cmd.command) + 
-                    " (" + cmd.command + ")");
+                // Short delay to prevent CPU thrashing
+                try {
+                    Thread.sleep(1);
+                } catch (InterruptedException e) {
+                    // Ignore
+                }
+                
+                timeout++;
+                if (timeout > 3000) { // 3 second timeout
+                    throw new SocketTimeoutException("Read timed out after 3 seconds");
+                }
             }
-            failedFrames.incrementAndGet();
-            state = State.ERROR_RECOVERY;
-        } else {
-            // Command succeeded
-            successfulFrames.incrementAndGet();
-            lastSuccessTime.set(System.currentTimeMillis());
         }
-
-        return dac_response;
-    } catch (IOException e) {
-        log("IO Error during response read: " + e.getMessage());
-        throw e;
+        
+        return buffer;
     }
-}
+
+    /**
+     * Reads and parses a response from the DAC with improved error handling
+     */
+    DACResponse readResponse(Command cmd) throws IOException {
+        try {
+            // Use safe read method with timeout handling
+            byte[] responseBytes = safeReadBytes(22);
+            
+            if (responseBytes.length < 22) {
+                throw new IOException("Incomplete response from DAC: " + responseBytes.length + " bytes");
+            }
+            
+            DACResponse dac_response = new DACResponse(responseBytes);
+
+            // Handle emergency stop condition
+            if(dac_response.playback_state == 3) {
+                log("E-STOP detected: light_engine_flags=" + dac_response.light_engine_flags + 
+                    " playback_flags=" + dac_response.playback_flags);
+                log("Response for " + ((char) cmd.command) + ": " + dac_response);
+            }
+
+            // Verify we got an ACK
+            if (dac_response.response != Command.ACK_RESPONSE.command) {
+                log("Unexpected response: " + ((char) dac_response.response) + " (" + dac_response.response + ")");
+                failedFrames.incrementAndGet();
+                state = State.ERROR_RECOVERY;
+            }
+
+            // Verify we got the response for the correct command
+            if (dac_response.command != cmd.command) {
+                if(dac_response.command == Command.EMERGENCY_STOP.command) {
+                    log("E-STOP response: light_engine_flags=" + dac_response.light_engine_flags);
+                    log("Response for " + ((char) cmd.command) + ": " + dac_response);
+                } else {
+                    log("Unexpected response from wrong command: " + ((char) dac_response.command) + 
+                        " (" + dac_response.command + "), expected: " + ((char) cmd.command) + 
+                        " (" + cmd.command + ")");
+                }
+                failedFrames.incrementAndGet();
+                state = State.ERROR_RECOVERY;
+            } else {
+                // Command succeeded
+                successfulFrames.incrementAndGet();
+                lastSuccessTime.set(System.currentTimeMillis());
+            }
+
+            return dac_response;
+        } catch (IOException e) {
+            log("IO Error during response read: " + e.getMessage());
+            throw e;
+        }
+    }
 
     /**
      * Information about a DAC received from its broadcast
@@ -434,7 +435,7 @@ DACResponse readResponse(Command cmd) throws IOException {
          *   uint16_t hw_revision;
          *   uint16_t sw_revision; 
          *   uint16_t buffer_capacity; 
-         *   uint16_t max_point_rate;
+         *   uint32_t max_point_rate;
          *   struct dac_status status; 
          * };
          */
@@ -596,169 +597,168 @@ DACResponse readResponse(Command cmd) throws IOException {
                     }
                     
                     // Initialize DAC connection
-case INIT: {
-    try {
-        // Reset key state variables
-        throttlingActive = false;
-        lastSuccessfulPingTime = System.currentTimeMillis();
-        
-        // Send ping and get version with shortened timeout
-        log("Initializing DAC connection...");
-        socket.setSoTimeout(1500); // Shorter timeout for initialization
-        
-        DACResponse r = write(Command.PING);
-        write(Command.VERSION);
+                    case INIT: {
+                        try {
+                            // Reset key state variables
+                            throttlingActive = false;
+                            lastSuccessfulPingTime = System.currentTimeMillis();
+                            
+                            // Send ping and get version with shortened timeout
+                            log("Initializing DAC connection...");
+                            socket.setSoTimeout(1500); // Shorter timeout for initialization
+                            
+                            DACResponse r = write(Command.PING);
+                            write(Command.VERSION);
 
-        // Clear emergency stop if needed
-        if (r != null && r.light_engine_state == 3) {
-            log("Clearing emergency stop condition");
-            write(Command.CLEAR_EMERGENCY_STOP);
-        }
+                            // Clear emergency stop if needed
+                            if (r != null && r.light_engine_state == 3) {
+                                log("Clearing emergency stop condition");
+                                write(Command.CLEAR_EMERGENCY_STOP);
+                            }
 
-        // Prepare for streaming
-        r = write(Command.PREPARE_STREAM);
-        log("Stream prepared: " + r);
+                            // Prepare for streaming
+                            r = write(Command.PREPARE_STREAM);
+                            log("Stream prepared: " + r);
 
-        // Get initial frames - ensure we have valid data
-        frame = getFrame();
-        if (frame == null || frame.length == 0) {
-            log("Warning: Empty frame received during initialization");
-            frame = getTestPattern();
-        }
-        log("Initial frame ready with " + frame.length + " points");
-        
-        // Send first frame
-        r = write(Command.WRITE_DATA, frame);
-        log("First frame sent: " + r);
-        
-        // Get second frame for buffer
-        frame = getFrame();
-        if (frame == null || frame.length == 0) {
-            log("Warning: Empty frame received for buffer");
-            frame = getTestPattern();
-        }
-        log("Second frame ready with " + frame.length + " points");
-        
-        // Start playback at reduced point rate for stability
-        int pointRate = dacBroadcast != null ? 
-            Math.min(maxPointRate, dacBroadcast.max_point_rate) : maxPointRate;
-        
-        log("Starting playback at " + pointRate + " points per second");
-        r = write(Command.BEGIN_PLAYBACK, 0, pointRate);
-        log("Playback started: " + r);
-        
-        // Reset timeout to normal
-        socket.setSoTimeout(3000);
-        
-        // Successful initialization
-        state = State.WRITE_DATA;
-        errorCount = 0; // Reset error counter on successful init
-    } catch (Exception e) {
-        log("Error during initialization: " + e.getMessage());
-        e.printStackTrace();
-        state = State.ERROR_RECOVERY;
-    }
-    break;
-}
+                            // Get initial frames - ensure we have valid data
+                            frame = getFrame();
+                            if (frame == null || frame.length == 0) {
+                                log("Warning: Empty frame received during initialization");
+                                frame = getTestPattern();
+                            }
+                            log("Initial frame ready with " + frame.length + " points");
+                            
+                            // Send first frame
+                            r = write(Command.WRITE_DATA, frame);
+                            log("First frame sent: " + r);
+                            
+                            // Get second frame for buffer
+                            frame = getFrame();
+                            if (frame == null || frame.length == 0) {
+                                log("Warning: Empty frame received for buffer");
+                                frame = getTestPattern();
+                            }
+                            log("Second frame ready with " + frame.length + " points");
+                            
+                            // Start playback at reduced point rate for stability
+                            int pointRate = dacBroadcast != null ? 
+                                Math.min(maxPointRate, dacBroadcast.max_point_rate) : maxPointRate;
+                            
+                            log("Starting playback at " + pointRate + " points per second");
+                            r = write(Command.BEGIN_PLAYBACK, 0, pointRate);
+                            log("Playback started: " + r);
+                            
+                            // Reset timeout to normal
+                            socket.setSoTimeout(3000);
+                            
+                            // Successful initialization
+                            state = State.WRITE_DATA;
+                            errorCount = 0; // Reset error counter on successful init
+                        } catch (Exception e) {
+                            log("Error during initialization: " + e.getMessage());
+                            e.printStackTrace();
+                            state = State.ERROR_RECOVERY;
+                        }
+                        break;
+                    }
                     
                     // Normal operation - keep sending data
-                    // Update the WRITE_DATA case to this version:
-    case WRITE_DATA: {
-    try {
-        // Check if we've had a successful ping recently to avoid timeouts
-        long timeSinceLastSuccess = System.currentTimeMillis() - lastSuccessfulPingTime;
-        if (timeSinceLastSuccess > pingTimeoutThreshold) {
-            log("No successful ping for " + (timeSinceLastSuccess/1000) + " seconds, entering recovery");
-            state = State.ERROR_RECOVERY;
-            break;
-        }
-        
-        // Check DAC status with shorter timeout
-        socket.setSoTimeout(800); // Shorter timeout
-        DACResponse r;
-        
-        try {
-            r = write(Command.PING);
-            lastSuccessfulPingTime = System.currentTimeMillis();
-            
-            // Store buffer fullness for monitoring
-            lastBufferFullness = r.buffer_fullness;
-        } catch (SocketTimeoutException ste) {
-            log("Ping timeout in WRITE_DATA, entering recovery");
-            state = State.ERROR_RECOVERY;
-            break;
-        }
-        
-        // Determine buffer capacity 
-        int bufferCapacity = (dacBroadcast != null) ? 
-            dacBroadcast.buffer_capacity : 1800;
-        
-        // Calculate safe buffer limit based on utilization target
-        int safeBufferLimit = (int)(bufferCapacity * maxBufferUtilization);
-        
-        // Make sure we have a valid frame
-        if (frame == null || frame.length == 0) {
-            frame = getTestPattern();
-        }
-        
-        // Check if we're above the safe threshold
-        if (r.buffer_fullness > safeBufferLimit) {
-            // Buffer getting full, activate throttling
-            if (!throttlingActive) {
-                throttlingActive = true;
-                log("Activating throttling at " + r.buffer_fullness + "/" + bufferCapacity + 
-                    " (" + (int)(r.buffer_fullness * 100.0 / bufferCapacity) + "%)");
-            }
-            
-            // Wait longer when buffer is fuller (dynamic delay)
-            int delayMs = (int)(50 * (r.buffer_fullness - safeBufferLimit) / 
-                      (bufferCapacity - safeBufferLimit));
-            delayMs = Math.min(100, Math.max(20, delayMs));
-            
-            log("Buffer high (" + r.buffer_fullness + "/" + bufferCapacity + 
-                "), waiting " + delayMs + "ms");
-            Thread.sleep(delayMs);
-            
-            // Just continue without sending to let buffer drain
-            continue;
-        } else if (throttlingActive && r.buffer_fullness < (safeBufferLimit * 0.8)) {
-            // Resume normal operation when buffer is well below threshold
-            throttlingActive = false;
-            log("Deactivating throttling at " + r.buffer_fullness + "/" + bufferCapacity);
-        }
-        
-        // If there's room in the buffer, send more frames
-        if (r.buffer_fullness < (bufferCapacity - frame.length)) {
-            // Log frame details
-            log("Sending frame with " + frame.length + " points, buffer: " + 
-                r.buffer_fullness + "/" + bufferCapacity + 
-                " (" + (int)(r.buffer_fullness * 100.0 / bufferCapacity) + "%)");
-            
-            // Send frame
-            write(Command.WRITE_DATA, frame);
-            
-            // Get next frame immediately
-            frame = getFrame();
-            
-            // Small delay between frames for stability
-            Thread.sleep(5);
-        } else {
-            // Buffer full, wait longer
-            log("Buffer full (" + r.buffer_fullness + "/" + bufferCapacity + 
-                "), waiting before sending more");
-            Thread.sleep(30);
-        }
-        
-        // Reset timeout back to normal
-        socket.setSoTimeout(3000);
-    } catch (Exception e) {
-        log("Error in WRITE_DATA state: " + e.getMessage());
-        e.printStackTrace();
-        state = State.ERROR_RECOVERY;
-    }
-    break;
-}
-                    
+                    case WRITE_DATA: {
+                        try {
+                            // Check if we've had a successful ping recently to avoid timeouts
+                            long timeSinceLastSuccess = System.currentTimeMillis() - lastSuccessfulPingTime;
+                            if (timeSinceLastSuccess > pingTimeoutThreshold) {
+                                log("No successful ping for " + (timeSinceLastSuccess/1000) + " seconds, entering recovery");
+                                state = State.ERROR_RECOVERY;
+                                break;
+                            }
+                            
+                            // Check DAC status with shorter timeout
+                            socket.setSoTimeout(800); // Shorter timeout
+                            DACResponse r;
+                            
+                            try {
+                                r = write(Command.PING);
+                                lastSuccessfulPingTime = System.currentTimeMillis();
+                                
+                                // Store buffer fullness for monitoring
+                                lastBufferFullness = r.buffer_fullness;
+                            } catch (SocketTimeoutException ste) {
+                                log("Ping timeout in WRITE_DATA, entering recovery");
+                                state = State.ERROR_RECOVERY;
+                                break;
+                            }
+                            
+                            // Determine buffer capacity 
+                            int bufferCapacity = (dacBroadcast != null) ? 
+                                dacBroadcast.buffer_capacity : 1800;
+                            
+                            // Calculate safe buffer limit based on utilization target
+                            int safeBufferLimit = (int)(bufferCapacity * maxBufferUtilization);
+                            
+                            // Make sure we have a valid frame
+                            if (frame == null || frame.length == 0) {
+                                frame = getTestPattern();
+                            }
+                            
+                            // Check if we're above the safe threshold
+                            if (r.buffer_fullness > safeBufferLimit) {
+                                // Buffer getting full, activate throttling
+                                if (!throttlingActive) {
+                                    throttlingActive = true;
+                                    log("Activating throttling at " + r.buffer_fullness + "/" + bufferCapacity + 
+                                        " (" + (int)(r.buffer_fullness * 100.0 / bufferCapacity) + "%)");
+                                }
+                                
+                                // Wait longer when buffer is fuller (dynamic delay)
+                                int delayMs = (int)(50 * (r.buffer_fullness - safeBufferLimit) / 
+                                          (bufferCapacity - safeBufferLimit));
+                                delayMs = Math.min(100, Math.max(20, delayMs));
+                                
+                                log("Buffer high (" + r.buffer_fullness + "/" + bufferCapacity + 
+                                    "), waiting " + delayMs + "ms");
+                                Thread.sleep(delayMs);
+                                
+                                // Just continue without sending to let buffer drain
+                                continue;
+                            } else if (throttlingActive && r.buffer_fullness < (safeBufferLimit * 0.8)) {
+                                // Resume normal operation when buffer is well below threshold
+                                throttlingActive = false;
+                                log("Deactivating throttling at " + r.buffer_fullness + "/" + bufferCapacity);
+                            }
+                            
+                            // If there's room in the buffer, send more frames
+                            if (r.buffer_fullness < (bufferCapacity - frame.length)) {
+                                // Log frame details
+                                log("Sending frame with " + frame.length + " points, buffer: " + 
+                                    r.buffer_fullness + "/" + bufferCapacity + 
+                                    " (" + (int)(r.buffer_fullness * 100.0 / bufferCapacity) + "%)");
+                                
+                                // Send frame
+                                write(Command.WRITE_DATA, frame);
+                                
+                                // Get next frame immediately
+                                frame = getFrame();
+                                
+                                // Small delay between frames for stability
+                                Thread.sleep(5);
+                            } else {
+                                // Buffer full, wait longer
+                                log("Buffer full (" + r.buffer_fullness + "/" + bufferCapacity + 
+                                    "), waiting before sending more");
+                                Thread.sleep(30);
+                            }
+                            
+                            // Reset timeout back to normal
+                            socket.setSoTimeout(3000);
+                        } catch (Exception e) {
+                            log("Error in WRITE_DATA state: " + e.getMessage());
+                            e.printStackTrace();
+                            state = State.ERROR_RECOVERY;
+                        }
+                        break;
+                    }
+                        
                     // Error recovery
 case ERROR_RECOVERY: {
     errorCount++;
