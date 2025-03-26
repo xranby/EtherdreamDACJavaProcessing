@@ -3,6 +3,7 @@
  * 
  * Visualizes the raw and physics-processed points from CosmicGroove
  * to demonstrate how galvanometer physics affects laser output.
+ * Updated to use the DACPoint accessors for coordinate extraction.
  */
 
 class VisualizationMode {
@@ -87,7 +88,7 @@ class VisualizationMode {
     ArrayList<DACPoint> dacPoints = activePlugin.getPoints();
     if (dacPoints == null || dacPoints.isEmpty()) return;
     
-    // Convert DAC points to PVectors
+    // Convert DAC points to PVectors using the accessor methods
     ArrayList<PVector> currentRawPoints = convertDACtoScreen(dacPoints);
     
     // Apply physics simulation
@@ -386,14 +387,15 @@ class VisualizationMode {
   }
   
   /**
-   * Convert DAC points to screen coordinates
+   * Convert DAC points to screen coordinates using the accessor methods
    */
   ArrayList<PVector> convertDACtoScreen(ArrayList<DACPoint> dacPoints) {
     ArrayList<PVector> screenPoints = new ArrayList<PVector>();
     
     for (DACPoint dacPoint : dacPoints) {
-      float x = map(dacPoint.x, -32767, 32767, 0, width);
-      float y = map(dacPoint.y, 32767, -32767, 0, height);  // Y is inverted
+      // Use the getX() and getY() accessor methods
+      float x = map(dacPoint.getX(), -32767, 32767, 0, width);
+      float y = map(dacPoint.getY(), 32767, -32767, 0, height);  // Y is inverted
       screenPoints.add(new PVector(x, y));
     }
     

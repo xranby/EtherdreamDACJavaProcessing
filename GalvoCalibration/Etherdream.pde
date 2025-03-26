@@ -121,9 +121,24 @@ enum DACStatus {
 /**
  * Represents a single point to be displayed by the laser
  */
+/**
+ * DACPoint class for Etherdream
+ * Enhanced with coordinate and color accessors for visualization
+ */
 public class DACPoint implements Byteable {
     byte[] p;
+    
+    // Cached values for faster access
+    private int cachedX = 0;
+    private int cachedY = 0;
+    private int cachedR = 0;
+    private int cachedG = 0;
+    private int cachedB = 0;
+    private boolean valuesCached = false;
 
+    /**
+     * Default constructor creates empty point
+     */
     DACPoint() {
         p = new byte[18];
     }
@@ -140,6 +155,14 @@ public class DACPoint implements Byteable {
     DACPoint(int x, int y, int r, int g, int b) {
         p = toBytes((char) 0x0, (char) x, (char) y, (char) r, (char) g, (char) b, (char) 0x0, (char) 0x0,
                 (char) 0x0);
+        
+        // Cache values for quick access
+        cachedX = x;
+        cachedY = y;
+        cachedR = r;
+        cachedG = g;
+        cachedB = b;
+        valuesCached = true;
     }
 
     /**
@@ -151,6 +174,14 @@ public class DACPoint implements Byteable {
     DACPoint(int x, int y) {
         p = toBytes((char) 0x0, (char) x, (char) y, (char) 65535, (char) 65535, (char) 65535, (char) 0x0,
                 (char) 0x0, (char) 0x0);
+        
+        // Cache values for quick access
+        cachedX = x;
+        cachedY = y;
+        cachedR = 65535;
+        cachedG = 65535;
+        cachedB = 65535;
+        valuesCached = true;
     }
 
     /*
@@ -168,6 +199,112 @@ public class DACPoint implements Byteable {
      */
     public byte[] bytes() {
         return p;
+    }
+    
+    /**
+     * Get X coordinate of point
+     * @return X coordinate (-32767 to 32767)
+     */
+    public int getX() {
+        if (valuesCached) {
+            return cachedX;
+        }
+        
+        // Extract X value from byte array (at positions 2-3)
+        return extractInt16(2);
+    }
+    
+    /**
+     * Get Y coordinate of point
+     * @return Y coordinate (-32767 to 32767)
+     */
+    public int getY() {
+        if (valuesCached) {
+            return cachedY;
+        }
+        
+        // Extract Y value from byte array (at positions 4-5)
+        return extractInt16(4);
+    }
+    
+    /**
+     * Get Red color component
+     * @return Red value (0 to 65535)
+     */
+    public int getR() {
+        if (valuesCached) {
+            return cachedR;
+        }
+        
+        // Extract R value from byte array (at positions 6-7)
+        return extractUInt16(6);
+    }
+    
+    /**
+     * Get Green color component
+     * @return Green value (0 to 65535)
+     */
+    public int getG() {
+        if (valuesCached) {
+            return cachedG;
+        }
+        
+        // Extract G value from byte array (at positions 8-9)
+        return extractUInt16(8);
+    }
+    
+    /**
+     * Get Blue color component
+     * @return Blue value (0 to 65535)
+     */
+    public int getB() {
+        if (valuesCached) {
+            return cachedB;
+        }
+        
+        // Extract B value from byte array (at positions 10-11)
+        return extractUInt16(10);
+    }
+    
+    /**
+     * Extract a signed 16-bit integer from byte array
+     * @param offset Offset into byte array
+     * @return Signed 16-bit integer value
+     */
+    private int extractInt16(int offset) {
+        // Check for valid length
+        if (p.length < offset + 2) {
+            return 0;
+        }
+        
+        // Extract 16-bit signed integer in little-endian byte order
+        int lo = p[offset] & 0xFF;
+        int hi = p[offset + 1] & 0xFF;
+        int result = (hi << 8) | lo;
+        
+        // Convert to signed value
+        if ((result & 0x8000) != 0) {
+            result = result - 0x10000;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Extract an unsigned 16-bit integer from byte array
+     * @param offset Offset into byte array
+     * @return Unsigned 16-bit integer value
+     */
+    private int extractUInt16(int offset) {
+        // Check for valid length
+        if (p.length < offset + 2) {
+            return 0;
+        }
+        
+        // Extract 16-bit unsigned integer in little-endian byte order
+        int lo = p[offset] & 0xFF;
+        int hi = p[offset + 1] & 0xFF;
+        return (hi << 8) | lo;
     }
 }
 

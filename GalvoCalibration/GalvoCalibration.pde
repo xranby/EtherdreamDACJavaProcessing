@@ -30,7 +30,8 @@ enum AppMode {
   CAMERA_SETUP,
   PARAMETER_EXPORT,
   LIVE_TESTING,
-  PLUGIN_MODE // New mode for plugins
+  PLUGIN_MODE, // Plugin mode
+  VISUALIZATION_MODE // Visualization mode
 }
 
 // Current application state
@@ -43,6 +44,8 @@ UIManager ui;
 DataManager dataManager;
 LaserController laser;
 PluginManager pluginManager; // Plugin manager
+VisualizationMode visualizer; // Visualization mode
+PointOutputDisplay pointDisplay; // Point output display
 
 // Laser callback for plugins
 LaserCallback laserCallbackImpl;
@@ -81,6 +84,12 @@ void setup() {
   // Initialize plugins
   initializePlugins();
   
+  // Initialize visualization mode
+  visualizer = new VisualizationMode(this, pluginManager, physics);
+  
+  // Initialize point output display
+  pointDisplay = new PointOutputDisplay();
+  
   // Initialize UI after plugins are loaded
   ui = new UIManager(this);
   
@@ -105,10 +114,25 @@ void draw() {
   background(0);
   frameCounter++;
   
+  // Special handling for visualization mode
+  if (currentMode == AppMode.VISUALIZATION_MODE) {
+    visualizer.update();
+    visualizer.draw();
+    drawPluginSelector();
+    return;
+  }
+  
   // Plugin mode runs separately from other modes
   if (currentMode == AppMode.PLUGIN_MODE) {
     if (pluginManager.getActivePlugin() != null) {
+      // Update point display with current plugin points
+      pointDisplay.update(pluginManager.getActivePlugin());
+      
+      // Draw the plugin
       pluginManager.draw();
+      
+      // Draw point display on top of plugin
+      pointDisplay.draw();
     }
     drawPluginUI();
   } else {
@@ -155,18 +179,22 @@ void drawPluginSelector() {
   // Draw text
   if (currentMode == AppMode.PLUGIN_MODE) {
     fill(255, 255, 0); // Highlight when in plugin mode
+  } else if (currentMode == AppMode.VISUALIZATION_MODE) {
+    fill(0, 255, 255); // Cyan for visualization mode
   } else {
     fill(255);
   }
   textAlign(CENTER, CENTER);
   textSize(14);
   
-  String pluginName = "Calibration";
+  String modeName = "Calibration";
   if (currentMode == AppMode.PLUGIN_MODE && pluginManager.getActivePlugin() != null) {
-    pluginName = pluginManager.getActivePlugin().getName();
+    modeName = pluginManager.getActivePlugin().getName();
+  } else if (currentMode == AppMode.VISUALIZATION_MODE) {
+    modeName = "Visualization";
   }
   
-  text("Mode: " + pluginName, 
+  text("Mode: " + modeName, 
        pluginSelectorX + pluginSelectorWidth/2, 
        pluginSelectorY + pluginSelectorHeight/2);
 }
@@ -175,12 +203,12 @@ void drawPluginUI() {
   // Draw small help UI when in plugin mode
   fill(0, 0, 0, 150);
   noStroke();
-  rect(10, height - 35, 500, 25);
+  rect(10, height - 35, 600, 25);
   
   fill(255);
   textAlign(LEFT, CENTER);
   textSize(12);
-  text("Press 'P' to switch plugins, ESC to exit plugin mode, TAB to return to calibration", 
+  text("Press 'P' to switch plugins, 'V' for visualization, 'O' to show point output, ESC to exit plugin mode", 
        20, height - 23);
 }
 
@@ -297,12 +325,12 @@ void initializePlugins() {
 void keyPressed() {
   // Global key handlers for all modes
   if (key == TAB) {
-    // In plugin mode, tab exits to calibration
-    if (currentMode == AppMode.PLUGIN_MODE) {
+    // In special modes, tab exits to calibration
+    if (currentMode == AppMode.PLUGIN_MODE || currentMode == AppMode.VISUALIZATION_MODE) {
       currentMode = AppMode.MANUAL_CALIBRATION;
     } else {
       // Cycle through calibration modes
-      int nextMode = (currentMode.ordinal() + 1) % (AppMode.values().length - 1); // Skip PLUGIN_MODE
+      int nextMode = (currentMode.ordinal() + 1) % (AppMode.values().length - 2); // Skip PLUGIN_MODE and VISUALIZATION_MODE
       currentMode = AppMode.values()[nextMode];
     }
     return;
@@ -315,6 +343,23 @@ void keyPressed() {
       currentMode = AppMode.PLUGIN_MODE;
     }
     return;
+  } else if (key == 'v' || key == 'V') {
+    // Toggle visualization mode
+    if (currentMode == AppMode.VISUALIZATION_MODE) {
+      // Exit to previous mode
+      currentMode = AppMode.PLUGIN_MODE;
+    } else {
+      // Enter visualization mode
+      currentMode = AppMode.VISUALIZATION_MODE;
+      visualizer.toggle();
+    }
+    return;
+  } else if (key == 'o' || key == 'O') {
+    // Toggle point output display (in plugin mode)
+    if (currentMode == AppMode.PLUGIN_MODE) {
+      pointDisplay.toggle();
+    }
+    return;
   } else if (key == 't' || key == 'T') {
     // Run laser test pattern
     runLaserTestPattern();
@@ -322,7 +367,9 @@ void keyPressed() {
   }
   
   // Mode-specific key handlers
-  if (currentMode == AppMode.PLUGIN_MODE) {
+  if (currentMode == AppMode.VISUALIZATION_MODE) {
+    visualizer.keyPressed();
+  } else if (currentMode == AppMode.PLUGIN_MODE) {
     // Forward key events to active plugin
     pluginManager.keyPressed();
   } else {
