@@ -1,11 +1,14 @@
 /**
- * Advanced Galvanometer Calibration System with Etherdream DAC Support
+ * Advanced Galvanometer Calibration System with Plugin Support
  *
  * An automated system to calibrate laser galvanometer parameters
  * using webcam feedback for true closed-loop optimization.
+ * Now includes plugin support for running CosmicGroove and other creative apps.
  *
  * This multi-file project consists of:
  * - GalvoCalibration.pde (main file)
+ * - PluginInterface.pde (plugin system)
+ * - CosmicGroovePlugin.pde (sound-reactive laser show)
  * - GalvoCallbacks.pde (Etherdream DAC callbacks)
  * - TestPatterns.pde (pattern generation)
  * - PhysicsSimulation.pde (galvo physics)
@@ -14,12 +17,6 @@
  * - UIManager.pde (interface elements)
  * - DataManager.pde (data handling)
  * - LaserController.pde (Etherdream interface)
- *
- * Requirements:
- * - Processing Video library
- * - Processing OpenCV library
- * - Etherdream DAC (or can run in simulation mode)
- * - Webcam with view of projection screen
  */
 
 import processing.video.*;
@@ -32,7 +29,8 @@ enum AppMode {
   AUTO_CALIBRATION,
   CAMERA_SETUP,
   PARAMETER_EXPORT,
-  LIVE_TESTING
+  LIVE_TESTING,
+  PLUGIN_MODE // New mode for plugins
 }
 
 // Current application state
@@ -44,11 +42,21 @@ AutoCalibrator calibrator;
 UIManager ui;
 DataManager dataManager;
 LaserController laser;
+PluginManager pluginManager; // Plugin manager
+
+// Laser callback for plugins
+LaserCallback laserCallbackImpl;
 
 // Calibration parameters
 GalvoParameters params;
 boolean isSimulationRunning = true;
 int frameCounter = 0;
+
+// UI positioning for plugin selector
+int pluginSelectorX = 150;
+int pluginSelectorY = 10;
+int pluginSelectorWidth = 200;
+int pluginSelectorHeight = 30;
 
 void setup() {
   size(1280, 720);
@@ -59,11 +67,22 @@ void setup() {
   physics = new PhysicsSimulator(params);
   currentPattern = new TestPattern(params);
   dataManager = new DataManager(params);
-  ui = new UIManager(this);
   
   // Initialize hardware-dependent modules
   setupLaser();
   setupCamera();
+  
+  // Set up laser callback for plugins
+  laserCallbackImpl = new LaserCallbackImpl();
+  
+  // Create plugin manager
+  pluginManager = new PluginManager(laserCallbackImpl);
+  
+  // Initialize plugins
+  initializePlugins();
+  
+  // Initialize UI after plugins are loaded
+  ui = new UIManager(this);
   
   // Initialize auto-calibrator (requires both camera and laser)
   if (camera != null && laser != null) {
@@ -79,40 +98,90 @@ void setup() {
   // Show startup message
   println("Galvanometer Calibration System initialized");
   println("Using Etherdream DAC for laser control");
+  println("Loaded " + pluginManager.getPluginCount() + " plugins");
 }
 
 void draw() {
   background(0);
   frameCounter++;
   
-  // Update pattern
-  currentPattern.update(frameCounter);
-  
-  // Main application workflow based on current mode
-  switch(currentMode) {
-    case MANUAL_CALIBRATION:
-      updateManualCalibration();
-      break;
-      
-    case AUTO_CALIBRATION:
-      updateAutoCalibration();
-      break;
-      
-    case CAMERA_SETUP:
-      updateCameraSetup();
-      break;
-      
-    case PARAMETER_EXPORT:
-      updateParameterExport();
-      break;
-      
-    case LIVE_TESTING:
-      updateLiveTesting();
-      break;
+  // Plugin mode runs separately from other modes
+  if (currentMode == AppMode.PLUGIN_MODE) {
+    if (pluginManager.getActivePlugin() != null) {
+      pluginManager.draw();
+    }
+    drawPluginUI();
+  } else {
+    // Update pattern
+    currentPattern.update(frameCounter);
+    
+    // Main application workflow based on current mode
+    switch(currentMode) {
+      case MANUAL_CALIBRATION:
+        updateManualCalibration();
+        break;
+        
+      case AUTO_CALIBRATION:
+        updateAutoCalibration();
+        break;
+        
+      case CAMERA_SETUP:
+        updateCameraSetup();
+        break;
+        
+      case PARAMETER_EXPORT:
+        updateParameterExport();
+        break;
+        
+      case LIVE_TESTING:
+        updateLiveTesting();
+        break;
+    }
+    
+    // Draw UI
+    ui.draw(currentMode);
   }
   
-  // Draw UI regardless of mode
-  ui.draw(currentMode);
+  // Draw plugin selector in all modes
+  drawPluginSelector();
+}
+
+void drawPluginSelector() {
+  // Draw plugin selector
+  fill(0, 0, 0, 200);
+  noStroke();
+  rect(pluginSelectorX, pluginSelectorY, pluginSelectorWidth, pluginSelectorHeight);
+  
+  // Draw text
+  if (currentMode == AppMode.PLUGIN_MODE) {
+    fill(255, 255, 0); // Highlight when in plugin mode
+  } else {
+    fill(255);
+  }
+  textAlign(CENTER, CENTER);
+  textSize(14);
+  
+  String pluginName = "Calibration";
+  if (currentMode == AppMode.PLUGIN_MODE && pluginManager.getActivePlugin() != null) {
+    pluginName = pluginManager.getActivePlugin().getName();
+  }
+  
+  text("Mode: " + pluginName, 
+       pluginSelectorX + pluginSelectorWidth/2, 
+       pluginSelectorY + pluginSelectorHeight/2);
+}
+
+void drawPluginUI() {
+  // Draw small help UI when in plugin mode
+  fill(0, 0, 0, 150);
+  noStroke();
+  rect(10, height - 35, 500, 25);
+  
+  fill(255);
+  textAlign(LEFT, CENTER);
+  textSize(12);
+  text("Press 'P' to switch plugins, ESC to exit plugin mode, TAB to return to calibration", 
+       20, height - 23);
 }
 
 void updateManualCalibration() {
@@ -213,30 +282,166 @@ void setupLaser() {
   }
 }
 
-void keyPressed() {
-  // Pass key events to UI
-  ui.keyPressed();
+void initializePlugins() {
+  // Create and register CosmicGroove plugin
+  CosmicGroovePlugin cosmicGroove = new CosmicGroovePlugin(this);
+  pluginManager.registerPlugin(cosmicGroove);
   
-  // Global shortcuts
+  // Register calibration as a "plugin" so we can switch back easily
+  CalibrationPlugin calibrationPlugin = new CalibrationPlugin(this);
+  pluginManager.registerPlugin(calibrationPlugin);
+  
+  // Additional plugins could be registered here
+}
+
+void keyPressed() {
+  // Global key handlers for all modes
   if (key == TAB) {
-    // Cycle through modes
-    currentMode = AppMode.values()[(currentMode.ordinal() + 1) % AppMode.values().length];
+    // In plugin mode, tab exits to calibration
+    if (currentMode == AppMode.PLUGIN_MODE) {
+      currentMode = AppMode.MANUAL_CALIBRATION;
+    } else {
+      // Cycle through calibration modes
+      int nextMode = (currentMode.ordinal() + 1) % (AppMode.values().length - 1); // Skip PLUGIN_MODE
+      currentMode = AppMode.values()[nextMode];
+    }
+    return;
+  } else if (key == 'p' || key == 'P') {
+    if (currentMode == AppMode.PLUGIN_MODE) {
+      // Next plugin
+      pluginManager.nextPlugin();
+    } else {
+      // Enter plugin mode
+      currentMode = AppMode.PLUGIN_MODE;
+    }
+    return;
   } else if (key == 't' || key == 'T') {
     // Run laser test pattern
     runLaserTestPattern();
+    return;
+  }
+  
+  // Mode-specific key handlers
+  if (currentMode == AppMode.PLUGIN_MODE) {
+    // Forward key events to active plugin
+    pluginManager.keyPressed();
+  } else {
+    // Pass key events to UI
+    ui.keyPressed();
+  }
+}
+
+void keyReleased() {
+  if (currentMode == AppMode.PLUGIN_MODE) {
+    pluginManager.keyReleased();
   }
 }
 
 void mousePressed() {
-  ui.mousePressed();
+  // Check plugin selector first
+  if (mouseX >= pluginSelectorX && mouseX <= pluginSelectorX + pluginSelectorWidth &&
+      mouseY >= pluginSelectorY && mouseY <= pluginSelectorY + pluginSelectorHeight) {
+    // Toggle between plugin mode and calibration mode
+    if (currentMode == AppMode.PLUGIN_MODE) {
+      currentMode = AppMode.MANUAL_CALIBRATION;
+    } else {
+      currentMode = AppMode.PLUGIN_MODE;
+    }
+    return;
+  }
+  
+  // Forward mouse events based on mode
+  if (currentMode == AppMode.PLUGIN_MODE) {
+    pluginManager.mousePressed();
+  } else {
+    ui.mousePressed();
+  }
 }
 
 void mouseDragged() {
-  ui.mouseDragged();
+  if (currentMode == AppMode.PLUGIN_MODE) {
+    pluginManager.mouseDragged();
+  } else {
+    ui.mouseDragged();
+  }
 }
 
 void mouseReleased() {
-  ui.mouseReleased();
+  if (currentMode == AppMode.PLUGIN_MODE) {
+    pluginManager.mouseReleased();
+  } else {
+    ui.mouseReleased();
+  }
+}
+
+/**
+ * Implementation of the LaserCallback interface for plugins
+ */
+class LaserCallbackImpl implements LaserCallback {
+  public void sendPoints(ArrayList<DACPoint> points) {
+    // Forward points to the laser controller
+    if (laser != null && laser.isReady()) {
+      laser.sendDACPoints(points);
+    }
+  }
+  
+  public boolean isLaserConnected() {
+    return laser != null && laser.isReady();
+  }
+  
+  public int getMaxPoints() {
+    return 600; // Default value
+  }
+  
+  public int getPointRate() {
+    return 34384; // Default point rate
+  }
+}
+
+/**
+ * Special "plugin" that represents the calibration system
+ * This allows switching back to calibration mode easily
+ */
+class CalibrationPlugin implements LaserPlugin {
+  PApplet parent;
+  
+  CalibrationPlugin(PApplet parent) {
+    this.parent = parent;
+  }
+  
+  public void setup() {
+    // Nothing to set up
+  }
+  
+  public void draw() {
+    // This won't actually be called, as we'll switch back to regular mode
+  }
+  
+  public void cleanup() {
+    // Nothing to clean up
+  }
+  
+  public void keyPressed() {}
+  public void keyReleased() {}
+  public void mousePressed() {}
+  public void mouseDragged() {}
+  public void mouseReleased() {}
+  
+  public String getName() {
+    return "Calibration System";
+  }
+  
+  public String getDescription() {
+    return "Galvanometer calibration and testing tools";
+  }
+  
+  public ArrayList<DACPoint> getPoints() {
+    return new ArrayList<DACPoint>();
+  }
+  
+  public void setLaserCallback(LaserCallback callback) {
+    // Nothing to do
+  }
 }
 
 // This class stores and manages all galvo parameters

@@ -3,6 +3,7 @@
  * 
  * Etherdream DAC integration for the galvanometer calibration system.
  * Provides direct control of the laser hardware with physics-based calibration.
+ * Updated to support plugin system integration.
  */
 
 class LaserController {
@@ -88,8 +89,8 @@ class LaserController {
   }
   
   /**
-   * Send points to the laser
-   * This stores the points for the Etherdream callback to use
+   * Send Processing PVector points to the laser
+   * This converts the points to DAC format
    */
   void sendPoints(ArrayList<PVector> points) {
     // Store current points for rendering
@@ -100,19 +101,34 @@ class LaserController {
       }
     }
     
-    // Convert to DAC points (synchronized separately)
+    // Convert to DAC points
+    ArrayList<DACPoint> convertedPoints = new ArrayList<DACPoint>();
+    
+    if (points != null) {
+      for (PVector p : points) {
+        // Map from screen coordinates to laser coordinates
+        int x = (int)map(p.x, 0, width, MI, MX);
+        int y = (int)map(p.y, 0, height, MX, MI); // Y is inverted
+        
+        // Add to DAC points list
+        convertedPoints.add(new DACPoint(x, y, 65535, 65535, 65535));
+      }
+    }
+    
+    // Send converted points
+    sendDACPoints(convertedPoints);
+  }
+  
+  /**
+   * Send DAC points directly to the laser
+   * This is used by plugins and the calibration system
+   */
+  void sendDACPoints(ArrayList<DACPoint> points) {
+    // Store DAC points for the Etherdream callback
     synchronized(dacPoints) {
       dacPoints.clear();
-      
       if (points != null) {
-        for (PVector p : points) {
-          // Map from screen coordinates to laser coordinates
-          int x = (int)map(p.x, 0, width, MI, MX);
-          int y = (int)map(p.y, 0, height, MX, MI); // Y is inverted
-          
-          // Add to DAC points list
-          dacPoints.add(new DACPoint(x, y, 65535, 65535, 65535));
-        }
+        dacPoints.addAll(points);
       }
     }
   }
@@ -127,16 +143,17 @@ class LaserController {
       currentPoints.add(new PVector(x, y));
     }
     
-    synchronized(dacPoints) {
-      dacPoints.clear();
-      
-      // Map from screen coordinates to laser coordinates
-      int lx = (int)map(x, 0, width, MI, MX);
-      int ly = (int)map(y, 0, height, MX, MI); // Y is inverted
-      
-      // Just send a single bright point
-      dacPoints.add(new DACPoint(lx, ly, 65535, 65535, 65535));
-    }
+    ArrayList<DACPoint> calibPoints = new ArrayList<DACPoint>();
+    
+    // Map from screen coordinates to laser coordinates
+    int lx = (int)map(x, 0, width, MI, MX);
+    int ly = (int)map(y, 0, height, MX, MI); // Y is inverted
+    
+    // Just send a single bright point
+    calibPoints.add(new DACPoint(lx, ly, 65535, 65535, 65535));
+    
+    // Send to laser
+    sendDACPoints(calibPoints);
   }
   
   /**
@@ -193,6 +210,7 @@ class LaserController {
   /**
    * This is the callback method required by the Etherdream library
    * It MUST be implemented in the main sketch and will be called to get points
+   * The main sketch forwards the call to this method
    */
   DACPoint[] getDACPoints() {
     if (mockMode) {
@@ -219,6 +237,20 @@ class LaserController {
     deviceStatus = "Connected - " + points.length + " points";
     
     return points;
+  }
+  
+  /**
+   * Get maximum point rate supported by the DAC
+   */
+  int getMaxPointRate() {
+    return maxPointRate;
+  }
+  
+  /**
+   * Get maximum points per frame supported by the DAC
+   */
+  int getMaxPoints() {
+    return 600; // Default safe value for Etherdream
   }
   
   /**
