@@ -70,7 +70,7 @@ class VisualizationMode {
       rawPoints.clear();
       processedPoints.clear();
       differenceVectors.clear();
-      showHelp = true;
+      showHelp = false;
     }
   }
   

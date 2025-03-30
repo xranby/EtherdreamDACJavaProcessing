@@ -114,6 +114,7 @@ void draw() {
   background(0);
   frameCounter++;
   
+      pluginManager.draw();
   // Special handling for visualization mode
   if (currentMode == AppMode.VISUALIZATION_MODE) {
     visualizer.update();
@@ -158,12 +159,13 @@ void draw() {
         break;
         
       case LIVE_TESTING:
-        updateLiveTesting();
         break;
     }
     
     // Draw UI
     ui.draw(currentMode);
+    
+        updateLiveTesting();
   }
   
   // Draw plugin selector in all modes
@@ -496,9 +498,9 @@ class GalvoParameters {
   // Main physics parameters
   float springConstant = 0.8;    // Spring stiffness (0.1-2.0)
   float dampingRatio = 0.65;     // Damping ratio (0.1-2.0, 1.0 is critical damping)
-  float naturalFrequency = 40;   // Natural frequency in Hz (10-100)
+  float naturalFrequency = 250;   // Natural frequency in Hz (10-100)
   float pointsPerSecond = 34384; // Points per second capability
-  float accelerationLimit = 0.2; // Maximum acceleration limit (0.05-1.0)
+  float accelerationLimit = 1000; // Maximum acceleration limit (0.05-1.0)
   float cornerSmoothing = 0.5;   // Corner smoothing factor (0.1-1.0)
 
   // Derived constants
