@@ -19,7 +19,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
  * The statemachine connects and maintains the connection with the DAC using TCP
  * Connection is restarted automatically on connection loss.
  * 
- * 
+ * Modified to support visualization capabilities
  */
 import java.io.*;
 import java.net.*;
@@ -95,19 +95,36 @@ import java.lang.reflect.Method;
 
     public class DACPoint implements Byteable {
         byte[] p;
+        // Add accessible fields for visualization
+        public int x, y, r, g, b;
 
         DACPoint() {
             p = new byte[18];
+            this.x = 0;
+            this.y = 0;
+            this.r = 0;
+            this.g = 0;
+            this.b = 0;
         }
 
         DACPoint(int x, int y, int r, int g, int b) {
             p = toBytes((char) 0x0, (char) x, (char) y, (char) r, (char) g, (char) b, (char) 0x0, (char) 0x0,
                     (char) 0x0);
+            this.x = x;
+            this.y = y;
+            this.r = r;
+            this.g = g;
+            this.b = b;
         }
 
         DACPoint(int x, int y) {
             p = toBytes((char) 0x0, (char) x, (char) y, (char) 65536, (char) 65536, (char) 65536, (char) 0x0,
                     (char) 0x0, (char) 0x0);
+            this.x = x;
+            this.y = y;
+            this.r = 65536;
+            this.g = 65536;
+            this.b = 65536;
         }
 
         /*
@@ -123,6 +140,8 @@ class Etherdream implements Runnable {
 
     Method method_get_frame = null;
     Object processing = null;
+    // Add a flag for visualization mode
+    protected boolean visualizationMode = false;
 
     public Etherdream(Object processing) {
         this.processing = processing;
@@ -284,47 +303,86 @@ class Etherdream implements Runnable {
         InetAddress etherdreamAddress = null;
         Socket socket = null;
         DACPoint[] frame = null;
+        boolean isConnected = false; // Track connection status for visualizer
 
         while (true) {
             if(lastState!=state){
                 System.out.println("state: " +lastState+ " -> "+ state);
                 lastState=state;
             }
+            
+            // Handle visualization mode
+            if (visualizationMode && state == State.GET_BROADCAST) {
+                // In visualization mode, we can skip waiting for a real DAC
+                try {
+                    Thread.sleep(100); // Small delay to prevent CPU hogging
+                    frame = getFrame();
+                    
+                    // If this is an EtherdreamVisualizer, update its frame
+                    if (this instanceof EtherdreamVisualizer) {
+                        ((EtherdreamVisualizer)this).setLatestFrame(frame);
+                    }
+                    
+                    Thread.sleep(16); // ~60fps refresh rate
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                continue;
+            }
+            
             try {
                 switch (state) {
                     case GET_BROADCAST: {
                         // Wait and get broadcast using UDP
+                        if (isConnected) {
+                            isConnected = false;
+                            // Update visualization connection status
+                            if (this instanceof EtherdreamVisualizer) {
+                                ((EtherdreamVisualizer)this).setConnected(false);
+                            }
+                        }
 
                         try (DatagramSocket inSocket = new DatagramSocket(7654)) {
+                            // Set timeout to allow periodic checking of visualization mode
+                            inSocket.setSoTimeout(1000);
+                            
+                            try {
+                                // get broadcast
+                                byte[] buffer = new byte[512];
+                                DatagramPacket response = new DatagramPacket(buffer, buffer.length);
+                                inSocket.receive(response);
 
-                            // get broadcast
-                            byte[] buffer = new byte[512];
-                            DatagramPacket response = new DatagramPacket(buffer, buffer.length);
-                            inSocket.receive(response);
+                                dacBroadcast = new DACBroadcast(Arrays.copyOfRange(buffer, 0, response.getLength()));
+                                System.out.println(dacBroadcast);
+                                etherdreamAddress = response.getAddress();
 
-                            dacBroadcast = new DACBroadcast(Arrays.copyOfRange(buffer, 0, response.getLength()));
-                            System.out.println(dacBroadcast);
-                            etherdreamAddress = response.getAddress();
-
-                            if (etherdreamAddress != null) {
-                                if (socket != null) {
-                                    try {
-                                        socket.close();
-                                        socket = null;
-                                    } catch (IOException e1) {
+                                if (etherdreamAddress != null) {
+                                    if (socket != null) {
+                                        try {
+                                            socket.close();
+                                            socket = null;
+                                        } catch (IOException e1) {
+                                        }
                                     }
+                                    socket = new Socket(etherdreamAddress, 7765);
+
+                                    output = socket.getOutputStream();
+                                    input = socket.getInputStream();
+                                    state = State.INIT;
+                                    isConnected = true;
+                                    
+                                    // Update visualization connection status
+                                    if (this instanceof EtherdreamVisualizer) {
+                                        ((EtherdreamVisualizer)this).setConnected(true);
+                                    }
+
+                                    // When a host first connects to the device, the device immediately sends it a
+                                    // status reply, as if the host had sent a ping packet
+                                    readResponse(Command.PING);
                                 }
-                                socket = new Socket(etherdreamAddress, 7765);
-
-                                output = socket.getOutputStream();
-                                input = socket.getInputStream();
-                                state = State.INIT;
-
-                                // When a host first connects to the device, the device immediately sends it a
-                                // status reply, as if the host had sent a ping packet
-                                readResponse(Command.PING);
+                            } catch (SocketTimeoutException e) {
+                                // This is expected - just continue the loop to check visualization mode
                             }
-
                         }
 
                         break;
@@ -345,6 +403,11 @@ class Etherdream implements Runnable {
                         write(Command.WRITE_DATA, frame);
                         frame = getFrame(); // buffer next frame
                         
+                        // If this is an EtherdreamVisualizer, update its frame
+                        if (this instanceof EtherdreamVisualizer) {
+                            ((EtherdreamVisualizer)this).setLatestFrame(frame);
+                        }
+                        
                         r = write(Command.BEGIN_PLAYBACK, 0, dacBroadcast.max_point_rate);
                         System.out.println(r);
                         state = State.WRITE_DATA;
@@ -355,6 +418,11 @@ class Etherdream implements Runnable {
                         if(r.buffer_fullness<(dacBroadcast.buffer_capacity-frame.length)){
                             write(Command.WRITE_DATA, frame);
                             frame = getFrame(); // buffer next frame
+                            
+                            // If this is an EtherdreamVisualizer, update its frame
+                            if (this instanceof EtherdreamVisualizer) {
+                                ((EtherdreamVisualizer)this).setLatestFrame(frame);
+                            }
                         }
                         break;
                     }
@@ -403,6 +471,14 @@ class Etherdream implements Runnable {
             26800,     26800,     27900);
         }
         return result;
+    }
+    
+    /**
+     * Enable or disable visualization mode
+     * In visualization mode, the system doesn't wait for a real DAC connection
+     */
+    public void setVisualizationMode(boolean enabled) {
+        this.visualizationMode = enabled;
     }
 }
 /* Helperfunctions to convert arrays and multiarguments of ...

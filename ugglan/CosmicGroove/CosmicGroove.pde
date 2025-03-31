@@ -1,3 +1,10 @@
+/**
+ * CosmicGrooveWithVisualizer.pde
+ * 
+ * Modified main sketch file with integrated visualizer support
+ * Adds visualization capabilities for testing without laser hardware
+ */
+
 import themidibus.*;
 import ddf.minim.*;
 import ddf.minim.analysis.*;
@@ -11,6 +18,8 @@ import java.util.Collections;
  * Fusion of Cosmic Dance and R-WDML systems
  * For Etherdream laser controller
  * Creates a responsive visual experience with music
+ * 
+ * Now with integrated visualizer for development without hardware
  */
 
 // System components
@@ -68,13 +77,36 @@ boolean midiTrigger = false;
 // Store uncoverted laser points updated by draw()
 volatile ArrayList<Point> laserpoint;
 
+// Visualizer component
+EtherdreamVisualizer visualizer;
+
+// Optional recording component
+SimulationRecorder recorder;
+
 void setup() {
-  size(640, 360);
+  size(800, 600);  // Increased window size for better visualization
   background(0);
   
-  // Initialize MIDI
-  MidiBus.list();
-  myBus = new MidiBus(this, 1, 2); // Input device 1, output device 2
+  // Initialize MIDI with error handling
+  try {
+    println("Available MIDI Devices:");
+    MidiBus.list(); // List all available MIDI devices
+    
+    // Only initialize MIDI if devices are available
+    if (MidiBus.availableInputs().length > 0 && MidiBus.availableOutputs().length > 0) {
+      myBus = new MidiBus(this, 0, 0); // Use first available devices
+      println("MIDI initialized with input: " + MidiBus.availableInputs()[0] +
+              ", output: " + MidiBus.availableOutputs()[0]);
+    } else {
+      println("No MIDI devices available. Running without MIDI support.");
+      myBus = null;
+    }
+  } catch (Exception e) {
+    // Handle the case where MIDI initialization fails
+    println("Could not initialize MIDI. Running without MIDI support.");
+    println("Error: " + e.getMessage());
+    myBus = null;
+  }
   
   // Initialize audio processing
   minim = new Minim(this);
@@ -101,8 +133,23 @@ void setup() {
   
   laserpoint = p;
   
-  // Register Etherdream callback
-  Etherdream laser = new Etherdream(this);
+  // Initialize visualizer instead of standard Etherdream
+  visualizer = new EtherdreamVisualizer(this);
+  
+  // Initialize recorder for saving simulations
+  recorder = new SimulationRecorder();
+  
+  // Set font for UI text
+  textFont(createFont("Arial", 12));
+  
+  // Display instructions
+  println("Cosmic Groove Visualizer");
+  println("------------------------");
+  println("Keyboard Controls:");
+  println("H - Toggle UI visibility");
+  println("S - Toggle simulation mode");
+  println("R - Start/stop recording");
+  println("P - Save last recording");
 }
 
 void draw() {
@@ -110,16 +157,19 @@ void draw() {
   frameCounter++;
   
   // Process MIDI data - fade down velocities for visual effect
-  List<Integer> activeKeys = Collections.list(pitchVelocityMap.keys());
-  for (Integer k : activeKeys) {
-    Float value = pitchFadeMap.getOrDefault(k, Float.valueOf(0));
-    Integer on = pitchVelocityMap.getOrDefault(k, Integer.valueOf(0));
-    if (on > 0) {
-      value = max(value - 0.001 * (k + 1), 0);
-    } else {
-      value = max(value - (1.2 + (k / 20.0)), 0);
+  List<Integer> activeKeys = new ArrayList<Integer>();
+  if (pitchVelocityMap != null) {
+    activeKeys = Collections.list(pitchVelocityMap.keys());
+    for (Integer k : activeKeys) {
+      Float value = pitchFadeMap.getOrDefault(k, Float.valueOf(0));
+      Integer on = pitchVelocityMap.getOrDefault(k, Integer.valueOf(0));
+      if (on > 0) {
+        value = max(value - 0.001 * (k + 1), 0);
+      } else {
+        value = max(value - (1.2 + (k / 20.0)), 0);
+      }
+      pitchFadeMap.put(k, value);
     }
-    pitchFadeMap.put(k, value);
   }
   
   // Audio analysis
@@ -171,6 +221,55 @@ void draw() {
   
   // Update the laserpoint reference
   laserpoint = p;
+  
+  // Convert points to DAC format for the visualizer
+  DACPoint[] dacPoints = getDACPointsAdjusted(laserpoint.toArray(new Point[0]));
+  
+  // Debug - verify points have colors (not all black)
+  boolean hasVisiblePoints = false;
+  for (DACPoint point : dacPoints) {
+    if (point.r > 0 || point.g > 0 || point.b > 0) {
+      hasVisiblePoints = true;
+      break;
+    }
+  }
+  
+  // If no visible points, add a test point to ensure something is visible
+  if (!hasVisiblePoints && dacPoints.length > 0) {
+    println("Warning: No visible points detected, adding test points");
+    DACPoint[] debugPoints = new DACPoint[dacPoints.length + 4];
+    System.arraycopy(dacPoints, 0, debugPoints, 0, dacPoints.length);
+    
+    // Add some visible test points
+    debugPoints[dacPoints.length] = new DACPoint(0, 0, 65535, 0, 0);  // Red at center
+    debugPoints[dacPoints.length+1] = new DACPoint(mx/2, 0, 0, 65535, 0);  // Green at top right
+    debugPoints[dacPoints.length+2] = new DACPoint(-mx/2, 0, 0, 0, 65535);  // Blue at top left
+    debugPoints[dacPoints.length+3] = new DACPoint(0, mx/2, 65535, 65535, 0);  // Yellow at bottom
+    
+    dacPoints = debugPoints;
+  }
+  
+  // Record frame if recording is active
+  if (recorder.isRecording()) {
+    recorder.recordFrame(dacPoints);
+    
+    // Display recording status
+    fill(255, 0, 0);
+    textAlign(LEFT, TOP);
+    text("RECORDING: " + recorder.getFrameCount() + " frames", 20, height - 20);
+  }
+  
+  // Update the visualizer with the current points
+  visualizer.setLatestFrame(dacPoints);
+  
+  // Debug information - display point count
+  fill(255);
+  textAlign(LEFT, TOP);
+  text("Generated Points: " + p.size(), 20, height - 40);
+  text("DAC Points: " + dacPoints.length, 20, height - 60);
+  
+  // Draw the visualizer
+  visualizer.draw();
 }
 
 void drawMandala(ArrayList<Point> p, List<Integer> activeKeys) {
@@ -348,105 +447,71 @@ void drawAudioWaveform(ArrayList<Point> p, List<Integer> activeKeys) {
   }
 }
 
-// Particle class for dynamic element
-class Particle {
-  PVector pos;
-  PVector vel;
-  float angle;
-  float angleSpeed;
-  float size;
-  float lifespan;
-  float maxLife;
+/**
+ * Process mouse pressed events
+ */
+void mousePressed() {
+  visualizer.mousePressed();
+}
+
+/**
+ * Process mouse dragged events
+ */
+void mouseDragged() {
+  visualizer.mouseDragged();
+}
+
+/**
+ * Process mouse released events
+ */
+void mouseReleased() {
+  visualizer.mouseReleased();
+}
+
+// Additional keyboard controls for the recorder
+void keyPressed() {
+  // Pass event to visualizer
+  visualizer.keyPressed();
   
-  Particle() {
-    reset();
-  }
-  
-  void reset() {
-    angle = random(TWO_PI);
-    angleSpeed = random(0.01, 0.05) * (random(1) > 0.5 ? 1 : -1);
-    size = random(2000, 5000);
-    maxLife = random(100, 200);
-    lifespan = maxLife;
-    
-    // Start from center
-    pos = new PVector(0, 0);
-    
-    // Random velocity direction
-    float a = random(TWO_PI);
-    vel = new PVector(cos(a), sin(a));
-    vel.mult(random(200, 500));
-  }
-  
-  void update() {
-    // Update position and angle
-    pos.add(vel);
-    angle += angleSpeed;
-    lifespan -= 1;
-    
-    // Reset if out of bounds or lifespan ended
-    if (lifespan <= 0 || abs(pos.x) > mx || abs(pos.y) > mx) {
-      reset();
+  // Recording controls
+  if (key == 'r' || key == 'R') {
+    if (recorder.isRecording()) {
+      recorder.stopRecording();
+    } else {
+      recorder.startRecording();
     }
   }
-  
-  void draw(ArrayList<Point> p) {
-    // Calculate alpha based on lifespan
-    float alpha = lifespan / maxLife;
-    
-    // Draw a spiral or star shape for each particle
-    int segments = 4;  // Keep segment count low for performance
-    
-    // Move to first point without drawing
-    int startX = (int)(pos.x + cos(angle) * size);
-    int startY = (int)(pos.y + sin(angle) * size);
-    p.add(new Point(startX, startY, 0, 0, 0));
-    
-    for (int i = 1; i <= segments; i++) {
-      float a = angle + map(i, 0, segments, 0, TWO_PI);
-      float r = (i % 2 == 0) ? size : size * 0.5;
-      
-      int x = (int)(pos.x + cos(a) * r);
-      int y = (int)(pos.y + sin(a) * r);
-      
-      // Unique color for each particle
-      int red = (int)(on * alpha * (0.5 + 0.5 * sin(hueShift * TWO_PI + i * 0.5)));
-      int green = (int)(on * alpha * (0.5 + 0.5 * cos(hueShift * TWO_PI + i * 0.7)));
-      int blue = (int)(on * alpha * (0.5 + 0.5 * sin(hueShift * TWO_PI + i * 0.9)));
-      
-      p.add(new Point(x, y, red, green, blue));
-    }
-    
-    // Connect back to first point
-    p.add(new Point(startX, startY, 0, 0, 0));
+  else if (key == 'p' || key == 'P') {
+    recorder.saveRecording("laser_recording_" + year() + month() + day() + "_" + hour() + minute() + second());
   }
 }
 
 // MIDI event handlers
 void noteOn(int channel, int pitch, int velocity) {
-  pitchVelocityMap.put(Integer.valueOf(pitch), Integer.valueOf(velocity));
-  pitchFadeMap.put(Integer.valueOf(pitch), Float.valueOf((float)velocity));
-  midiTrigger = true;
-}
-
-void noteOff(int channel, int pitch, int velocity) {
-  pitchVelocityMap.put(Integer.valueOf(pitch), Integer.valueOf(0));
-}
-
-void controllerChange(int channel, int number, int value) {
-  // Use MIDI controllers to adjust parameters if needed
-  if (number == 1) { // Mod wheel
-    pulseAmount = map(value, 0, 127, 0.1, 0.4);
-  } else if (number == 2) { // Breath controller or another CC
-    hueShiftSpeed = map(value, 0, 127, 0.001, 0.01);
-  } else if (number == 7) { // Volume
-    audioInfluence = map(value, 0, 127, 0.1, 1.0);
+  if (myBus != null) {
+    pitchVelocityMap.put(Integer.valueOf(pitch), Integer.valueOf(velocity));
+    pitchFadeMap.put(Integer.valueOf(pitch), Float.valueOf((float)velocity));
+    midiTrigger = true;
   }
 }
 
-// Etherdream callback - reusing the function from the original code
-DACPoint[] getDACPoints() {
-    return pointsMinimum(getDACPointsAdjusted(laserpoint.toArray(new Point[0])), 600);
+void noteOff(int channel, int pitch, int velocity) {
+  if (myBus != null) {
+    pitchVelocityMap.put(Integer.valueOf(pitch), Integer.valueOf(0));
+  }
+}
+
+void controllerChange(int channel, int number, int value) {
+  if (myBus != null) {
+    // Use MIDI controllers to adjust parameters if needed
+    if (number == 1) { // Mod wheel
+      pulseAmount = map(value, 0, 127, 0.1, 0.4);
+    } else if (number == 2) { // Breath controller or another CC
+      hueShiftSpeed = map(value, 0, 127, 0.001, 0.01);
+    } else if (number == 7) { // Volume
+      audioInfluence = map(value, 0, 127, 0.1, 1.0);
+    }
+  }
 }
 
 // Convert coordinates
@@ -560,19 +625,3 @@ DACPoint[] pointsMinimum(DACPoint[] p, int minimum) {
   
   return pointsMinimum(concatPoints(p,p), minimum);  
 }
-
-// Stub class for pitch detection
-/*class PitchDetectorAutocorrelation {
-  void SetSampleRate(float rate) {
-    // Implementation would go here
-  }
-  
-  long GetTime() {
-    return millis();
-  }
-  
-  float GetFrequency() {
-    // Simple implementation - could be enhanced
-    return audioInput.mix.level() * 1000;
-  }
-}*/
