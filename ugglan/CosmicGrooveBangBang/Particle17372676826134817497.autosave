@@ -1,0 +1,290 @@
+/**
+ * BangBangController Performance Test
+ * 
+ * This sketch demonstrates the performance differences between
+ * the original lerp-based approach and the new BangBangController.
+ * 
+ * Press 'SPACE' to toggle between methods
+ * Press 'S' to save performance data
+ */
+
+
+void setup() {
+  size(1200, 800);
+  background(0);
+  
+  // Create drawing canvas
+  canvas = createGraphics(width, height);
+  
+  // Initialize BangBangController
+  bangBangController = new BangBangController(maxAcceleration, maxVelocity, pointsPerSecond);
+  
+  // Generate test pattern
+  generateTestPattern();
+  
+  // Initialize test
+  startTime = millis();
+  runningTest = true;
+  
+  // Display instructions
+  textFont(createFont("Arial", 16));
+}
+
+void draw() {
+  background(0);
+  
+  // Run performance test
+  if (runningTest) {
+    runPerformanceTest();
+  }
+  
+  // Draw visualization
+  drawVisualization();
+  
+  // Draw UI
+  drawUI();
+}
+
+/**
+ * Generate a test pattern of points
+ */
+void generateTestPattern() {
+  testPoints = new ArrayList<PVector>();
+  lerpPoints = new ArrayList<Point>();
+  
+  // Generate complex pattern
+  // Circles, stars, and sinusoidal waves
+  
+  // Add perimeter circle
+  int numCirclePoints = 50;
+  float radius = 25000;
+  for (int i = 0; i < numCirclePoints; i++) {
+    float angle = map(i, 0, numCirclePoints, 0, TWO_PI);
+    float x = cos(angle) * radius;
+    float y = sin(angle) * radius;
+    testPoints.add(new PVector(x, y));
+    lerpPoints.add(new Point((int)x, (int)y, 65535, 0, 0));
+  }
+  
+  // Add star pattern
+  int numStarPoints = 10;
+  radius = 15000;
+  float innerRadius = 5000;
+  for (int i = 0; i <= numStarPoints*2; i++) {
+    float angle = map(i, 0, numStarPoints*2, 0, TWO_PI);
+    float r = (i % 2 == 0) ? radius : innerRadius;
+    float x = cos(angle) * r;
+    float y = sin(angle) * r;
+    testPoints.add(new PVector(x, y));
+    lerpPoints.add(new Point((int)x, (int)y, 0, 65535, 0));
+  }
+  
+  // Add sine wave pattern
+  int numWavePoints = 40;
+  float waveAmplitude = 10000;
+  float waveFrequency = 4;
+  for (int i = 0; i < numWavePoints; i++) {
+    float x = map(i, 0, numWavePoints-1, -25000, 25000);
+    float y = sin(x * 0.0001 * waveFrequency) * waveAmplitude;
+    testPoints.add(new PVector(x, y));
+    lerpPoints.add(new Point((int)x, (int)y, 0, 0, 65535));
+  }
+  
+  // Optimize the path with BangBang controller
+  optimizedPoints = bangBangController.generateOptimalPath(testPoints, 25, true);
+  
+  // Set initial measurements
+  bangBangPoints = optimizedPoints.size();
+  lerpPoints.size();
+}
+
+/**
+ * Run performance test comparing BangBang vs Lerp
+ */
+void runPerformanceTest() {
+  long currentTime = millis();
+  long elapsed = currentTime - startTime;
+  
+  // Switch methods halfway through test
+  if (elapsed > testDuration/2 && useBangBang) {
+    useBangBang = false;
+    bangBangTime = elapsed;
+    startTime = currentTime;
+  }
+  
+  // End test
+  if (elapsed > testDuration/2 && !useBangBang) {
+    lerpTime = elapsed;
+    runningTest = false;
+    
+    // Print results
+    println("Performance Test Results:");
+    println("BangBang Controller: " + bangBangPoints + " points in " + bangBangTime + "ms");
+    println("Lerp Controller: " + lerpPoints.size() + " points in " + lerpTime + "ms");
+    println("Point efficiency: " + (float)bangBangPoints/lerpPoints.size());
+    println("Time efficiency: " + lerpTime/bangBangTime);
+  }
+}
+
+/**
+ * Draw visualization of the current rendering method
+ */
+void drawVisualization() {
+  canvas.beginDraw();
+  canvas.background(0);
+  
+  // Draw grid
+  canvas.stroke(30);
+  canvas.strokeWeight(1);
+  for (int x = 0; x < width; x += 50) {
+    canvas.line(x, 0, x, height);
+  }
+  for (int y = 0; y < height; y += 50) {
+    canvas.line(0, y, width, y);
+  }
+  
+  // Draw points based on the current method
+  if (useBangBang) {
+    // Draw BangBang path
+    canvas.stroke(0, 255, 0);
+    canvas.strokeWeight(2);
+    for (int i = 0; i < optimizedPoints.size() - 1; i++) {
+      PVector p1 = optimizedPoints.get(i);
+      PVector p2 = optimizedPoints.get(i + 1);
+      
+      // Map from DAC coordinates to screen coordinates
+      float x1 = map(p1.x, -32767, 32767, 0, canvas.width);
+      float y1 = map(p1.y, 32767, -32767, 0, canvas.height);
+      float x2 = map(p2.x, -32767, 32767, 0, canvas.width);
+      float y2 = map(p2.y, 32767, -32767, 0, canvas.height);
+      
+      canvas.line(x1, y1, x2, y2);
+      
+      // Draw points
+      if (i % 5 == 0) {
+        canvas.fill(255);
+        canvas.noStroke();
+        canvas.ellipse(x1, y1, 4, 4);
+      }
+    }
+  } else {
+    // Draw original path with lerp
+    canvas.stroke(255, 100, 100);
+    canvas.strokeWeight(2);
+    for (int i = 0; i < lerpPoints.size() - 1; i++) {
+      Point p1 = lerpPoints.get(i);
+      Point p2 = lerpPoints.get(i + 1);
+      
+      // Map from DAC coordinates to screen coordinates
+      float x1 = map(p1.x, -32767, 32767, 0, canvas.width);
+      float y1 = map(p1.y, 32767, -32767, 0, canvas.height);
+      float x2 = map(p2.x, -32767, 32767, 0, canvas.width);
+      float y2 = map(p2.y, 32767, -32767, 0, canvas.height);
+      
+      canvas.line(x1, y1, x2, y2);
+      
+      // Simulate lerp points
+      if (i % 5 == 0) {
+        // Draw lerp points
+        int numLerpPoints = 5; // Number of lerp points per segment
+        for (int j = 1; j < numLerpPoints; j++) {
+          float t = j / (float)numLerpPoints;
+          float lx = lerp(x1, x2, t);
+          float ly = lerp(y1, y2, t);
+          
+          canvas.fill(255, 100, 100);
+          canvas.noStroke();
+          canvas.ellipse(lx, ly, 3, 3);
+        }
+      }
+    }
+  }
+  
+  canvas.endDraw();
+  image(canvas, 0, 0);
+}
+
+/**
+ * Draw UI elements
+ */
+void drawUI() {
+  // Display current method
+  fill(255);
+  textAlign(LEFT, TOP);
+  text("Current Method: " + (useBangBang ? "BangBang Controller" : "Lerp Method"), 20, 20);
+  
+  // Display performance metrics
+  String performanceText = "";
+  if (!runningTest) {
+    performanceText = "Performance Results:\n" +
+                     "BangBang: " + bangBangPoints + " points in " + nf(bangBangTime/1000, 1, 2) + "s\n" +
+                     "Lerp: " + lerpPoints.size() + " points in " + nf(lerpTime/1000, 1, 2) + "s\n" +
+                     "BangBang efficiency: " + nf((float)bangBangPoints/lerpPoints.size(), 1, 2) + "x fewer points\n" +
+                     "Rendering time ratio: " + nf(lerpTime/bangBangTime, 1, 2) + "x";
+  } else {
+    performanceText = "Running test... " + nf((millis() - startTime)/1000.0, 1, 1) + "s";
+  }
+  text(performanceText, 20, 60);
+  
+  // Display controls
+  String controlsText = "Controls:\n" +
+                       "SPACE - Toggle method\n" +
+                       "S - Save performance data\n" +
+                       "R - Regenerate test pattern\n" +
+                       "V - Toggle velocity visualization";
+  text(controlsText, 20, height - 100);
+}
+
+/**
+ * Handle key press events
+ */
+void keyPressed() {
+  if (key == ' ') {
+    // Toggle between BangBang and Lerp methods
+    useBangBang = !useBangBang;
+  }
+  else if (key == 's' || key == 'S') {
+    // Save performance data
+    saveResults();
+  }
+  else if (key == 'r' || key == 'R') {
+    // Regenerate test pattern
+    generateTestPattern();
+  }
+  else if (key == 'v' || key == 'V') {
+    // Toggle velocity visualization
+    showVelocity = !showVelocity;
+  }
+}
+
+/**
+ * Save performance results
+ */
+void saveResults() {
+  if (!runningTest) {
+    String timestamp = year() + nf(month(), 2) + nf(day(), 2) + "_" + nf(hour(), 2) + nf(minute(), 2);
+    String filename = "performance_" + timestamp + ".csv";
+    
+    // Create CSV content
+    String[] csv = {
+      "Test,Points,Time (ms)",
+      "BangBang," + bangBangPoints + "," + bangBangTime,
+      "Lerp," + lerpPoints.size() + "," + lerpTime,
+      "Ratio," + nf((float)bangBangPoints/lerpPoints.size(), 1, 4) + "," + nf(lerpTime/bangBangTime, 1, 4)
+    };
+    
+    // Save to file
+    saveStrings("data/" + filename, csv);
+    println("Performance data saved to: " + filename);
+  }
+}
+
+/**
+ * Create DAC point class for compatibility with CosmicGroove
+ */
+public class Point {
+  public final int x, y, r, g, b;
+  Point(int x, int y, int r, int g, int b) {
+     this.x=x;this.y=y;this.r=r;this.g=g;this.b=b;
+  }
+}
