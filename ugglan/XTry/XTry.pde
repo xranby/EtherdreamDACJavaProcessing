@@ -1,11 +1,8 @@
-
-
 /**
  * TailBlazer.pde
  * 
- * A laser-compatible arcade game where you navigate through obstacles
- * with both screen visualization and laser output support
- * Based on the Cosmic Groove system
+ * A laser-compatible arcade game (two-player) where you navigate through obstacles.
+ * Controls: MIDI keyboard (low octaves controls Player 1; higher octaves controls Player 2)
  */
 
 import themidibus.*;
@@ -29,12 +26,11 @@ final int on = 65535;
 final int off = 0;
 
 // Game variables
-Player player;
+Player player1, player2;        // Two players for two-player mode
 ArrayList<Obstacle> obstacles;
 ArrayList<PowerUp> powerUps;
 ArrayList<Particle> explosionParticles;
 int score = 0;
-int lives = 3;
 boolean gameOver = false;
 boolean gameStarted = false;
 int difficulty = 1;
@@ -70,14 +66,17 @@ void setup() {
   try {
     MidiBus.list();
     if (MidiBus.availableInputs().length > 0) {
-      myBus = new MidiBus(this, 0, -1);
+      myBus = new MidiBus(this, 1, 0);
     }
   } catch (Exception e) {
     println("Could not initialize MIDI. Error: " + e.getMessage());
     myBus = null;
   }
   
-  player = new Player();
+  // Initialize two players, positioning them differently
+  player1 = new Player(width/3, height - 100);
+  player2 = new Player(2 * width/3, height - 100);
+  
   obstacles = new ArrayList<Obstacle>();
   powerUps = new ArrayList<PowerUp>();
   explosionParticles = new ArrayList<Particle>();
@@ -185,7 +184,9 @@ void drawGameOverScreen(ArrayList<Point> p) {
 }
 
 void updateGame() {
-  player.update();
+  // Update both players
+  player1.update();
+  player2.update();
   
   // Speed based on audio reactivity
   float baseObstacleSpeed = 2.0 + (audioReactivity * 3.0);
@@ -203,46 +204,63 @@ void updateGame() {
     }
   }
   
+  // For each obstacle, check collisions with both players.
   for (int i = obstacles.size() - 1; i >= 0; i--) {
     Obstacle obstacle = obstacles.get(i);
     obstacle.speed = baseObstacleSpeed + (difficulty * 0.3);
     obstacle.update();
     
-    if (obstacle.checkCollision(player) && !player.isInvulnerable()) {
+    boolean collided = false;
+    // Check collision with player1
+    if (player1.isAlive() && obstacle.checkCollision(player1) && !player1.isInvulnerable()) {
       for (int j = 0; j < 10; j++) {
-        explosionParticles.add(new Particle(player.x, player.y));
+        explosionParticles.add(new Particle(player1.x, player1.y));
       }
-      
-      obstacles.remove(i);
-      lives--;
-      player.setInvulnerable(120);
-      
-      if (lives <= 0) {
-        gameOver = true;
+      player1.loseLife();
+      player1.setInvulnerable(120);
+      collided = true;
+    }
+    // Check collision with player2
+    if (player2.isAlive() && obstacle.checkCollision(player2) && !player2.isInvulnerable()) {
+      for (int j = 0; j < 10; j++) {
+        explosionParticles.add(new Particle(player2.x, player2.y));
       }
+      player2.loseLife();
+      player2.setInvulnerable(120);
+      collided = true;
     }
     
-    if (obstacle.y > height + 50) {
+    if (collided) {
+      obstacles.remove(i);
+    }
+    else if (obstacle.y > height + 50) {
       obstacles.remove(i);
       score += 10 * difficulty;
     }
   }
   
+  // Power-up collision checks for each player.
   for (int i = powerUps.size() - 1; i >= 0; i--) {
     PowerUp powerUp = powerUps.get(i);
     powerUp.speed = baseObstacleSpeed * 0.8;
     powerUp.update();
     
-    if (powerUp.checkCollision(player)) {
-      applyPowerUp(powerUp.type);
-      powerUps.remove(i);
+    boolean pickedUp = false;
+    if (player1.isAlive() && powerUp.checkCollision(player1)) {
+      applyPowerUp(player1, powerUp.type);
+      pickedUp = true;
+    }
+    if (player2.isAlive() && powerUp.checkCollision(player2)) {
+      applyPowerUp(player2, powerUp.type);
+      pickedUp = true;
     }
     
-    if (powerUp.y > height + 50) {
+    if (pickedUp || powerUp.y > height + 50) {
       powerUps.remove(i);
     }
   }
   
+  // Update explosion particles
   for (int i = explosionParticles.size() - 1; i >= 0; i--) {
     Particle particle = explosionParticles.get(i);
     particle.update();
@@ -251,15 +269,22 @@ void updateGame() {
     }
   }
   
+  // Increase difficulty if score threshold reached
   if (score > difficulty * 1000) {
     difficulty++;
   }
+  
+  // Check for game over: if both players have lost all lives.
+  if (!player1.isAlive() && !player2.isAlive()) {
+    gameOver = true;
+  }
 }
 
-void applyPowerUp(int type) {
+// Overloaded function to apply power-ups to a given player
+void applyPowerUp(Player player, int type) {
   switch (type) {
     case 0: // Extra life
-      lives++;
+      player.lives++;
       break;
     case 1: // Score boost
       score += 100 * difficulty;
@@ -273,8 +298,13 @@ void applyPowerUp(int type) {
 void drawGame(ArrayList<Point> p) {
   int remainingLines = 50;
   
-  int playerLines = player.draw(p);
-  remainingLines -= playerLines;
+  // Draw player1 and subtract its laser lines
+  int player1Lines = player1.draw(p);
+  remainingLines -= player1Lines;
+  
+  // Draw player2 and subtract its laser lines
+  int player2Lines = player2.draw(p);
+  remainingLines -= player2Lines;
   
   int particleLines = 0;
   for (Particle particle : explosionParticles) {
@@ -308,30 +338,43 @@ void addLaserLine(ArrayList<Point> p, int x1, int y1, int x2, int y2, int r, int
   p.add(new Point(x2, y2, r, g, b));
 }
 
+// --- Keyboard controls remain available for fallback ---
 void keyPressed() {
   if (key == ' ') {
     if (!gameStarted) {
       gameStarted = true;
     } else if (gameOver) {
-      player = new Player();
+      // Reset the game, reinitialize players and game state
+      player1 = new Player(width/3, height - 100);
+      player2 = new Player(2 * width/3, height - 100);
       obstacles.clear();
       powerUps.clear();
       explosionParticles.clear();
       score = 0;
-      lives = 3;
       difficulty = 1;
       gameOver = false;
     }
   }
   
+  // Control player1 with arrow keys (as fallback)
   if (keyCode == LEFT) {
-    player.setMoving(-1, 0);
+    player1.setMoving(-1, player1.moveY);
   } else if (keyCode == RIGHT) {
-    player.setMoving(1, 0);
+    player1.setMoving(1, player1.moveY);
   } else if (keyCode == UP) {
-    player.setMoving(0, -1);
+    player1.setMoving(player1.moveX, -1);
   } else if (keyCode == DOWN) {
-    player.setMoving(0, 1);
+    player1.setMoving(player1.moveX, 1);
+  }
+  
+  if (keyCode == 'A') {
+    player2.setMoving(-1, player2.moveY);
+  } else if (keyCode == 'D') {
+    player2.setMoving(1, player2.moveY);
+  } else if (keyCode == 'W') {
+    player2.setMoving(player2.moveX, -1);
+  } else if (keyCode == 'S') {
+    player2.setMoving(player2.moveX, 1);
   }
   
   visualizer.keyPressed();
@@ -339,60 +382,193 @@ void keyPressed() {
 
 void keyReleased() {
   if (keyCode == LEFT || keyCode == RIGHT) {
-    player.setMoving(0, player.moveY);
+    player1.setMoving(0, player1.moveY);
   } else if (keyCode == UP || keyCode == DOWN) {
-    player.setMoving(player.moveX, 0);
+    player1.setMoving(player1.moveX, 0);
+  }
+  
+  if (keyCode == 'A' || keyCode == 'D') {
+    player2.setMoving(0, player2.moveY);
+  } else if (keyCode == 'W' || keyCode == 'S') {
+    player2.setMoving(player2.moveX, 0);
   }
 }
 
+// --- MIDI Callbacks ---
+// Note: channel 0 controls player1 and channel 1 controls player2.
 void noteOn(int channel, int pitch, int velocity) {
   if (myBus != null && velocity > 0) {
-    switch (pitch % 12) {
-      case 0: // C - left
-        player.setMoving(-1, player.moveY);
-        break;
-      case 2: // D - right
-        player.setMoving(1, player.moveY);
-        break;
-      case 4: // E - up
-        player.setMoving(player.moveX, -1);
-        break;
-      case 5: // F - down
-        player.setMoving(player.moveX, 1);
-        break;
-      case 7: // G - start/restart
-        if (!gameStarted) {
-          gameStarted = true;
-        } else if (gameOver) {
-          player = new Player();
-          obstacles.clear();
-          powerUps.clear();
-          explosionParticles.clear();
-          score = 0;
-          lives = 3;
-          difficulty = 1;
-          gameOver = false;
-        }
-        break;
+    Player target = null;
+    //myBus.sendControllerChange(0,pitch,velocity);
+    
+    System.out.println(pitch);
+    System.out.println((pitch / 12) >=5);
+    
+    if ((pitch / 12) >=5) {
+      target = player1;
+    } else {
+      target = player2;
+    }
+    
+    if (target != null) {
+      switch (pitch % 12) {
+        case 0: // C - left
+          target.setMoving(-1, target.moveY);
+          break;
+        case 2: // D - right
+          target.setMoving(1, target.moveY);
+          break;
+        case 4: // E - up
+          target.setMoving(target.moveX, -1);
+          break;
+        case 5: // F - down
+          target.setMoving(target.moveX, 1);
+          break;
+        case 7: // G - start/restart
+          if (!gameStarted) {
+            gameStarted = true;
+          } else if (gameOver) {
+            player1 = new Player(width/3, height - 100);
+            player2 = new Player(2 * width/3, height - 100);
+            obstacles.clear();
+            powerUps.clear();
+            explosionParticles.clear();
+            score = 0;
+            difficulty = 1;
+            gameOver = false;
+          }
+          break;
+      }
     }
   }
 }
 
 void noteOff(int channel, int pitch, int velocity) {
   if (myBus != null) {
-    switch (pitch % 12) {
-      case 0: // C - left
-      case 2: // D - right
-        player.setMoving(0, player.moveY);
-        break;
-      case 4: // E - up
-      case 5: // F - down
-        player.setMoving(player.moveX, 0);
-        break;
+    Player target = null;
+    if (pitch / 12 >= 5) {
+      target = player1;
+    } else  {
+      target = player2;
+    }
+    
+    if (target != null) {
+      switch (pitch % 12) {
+        case 0: // C - left
+        case 2: // D - right
+          target.setMoving(0, target.moveY);
+          break;
+        case 4: // E - up
+        case 5: // F - down
+          target.setMoving(target.moveX, 0);
+          break;
+      }
     }
   }
 }
 
+// --- Modified Player class ---
+class Player {
+  float x, y;
+  float size;
+  int moveX, moveY;
+  float speed;
+  int invulnerableFrames;
+  int lives; // Each player has separate lives
+  
+  // Default constructor not used; use the parameterized one instead.
+  Player(float startX, float startY) {
+    x = startX;
+    y = startY;
+    size = 20;
+    moveX = 0;
+    moveY = 0;
+    speed = 5;
+    invulnerableFrames = 0;
+    lives = 3;
+  }
+  
+  void update() {
+    // Movement with audio-responsive speed
+    float audioSpeedMod = 1.0 + (audioReactivity * 0.5);
+    x += moveX * speed * audioSpeedMod;
+    y += moveY * speed * audioSpeedMod;
+    
+    x = constrain(x, size, width - size);
+    y = constrain(y, size, height - size);
+    
+    if (invulnerableFrames > 0) {
+      invulnerableFrames--;
+    }
+  }
+  
+  int draw(ArrayList<Point> p) {
+    // Blink the player if invulnerable
+    if (invulnerableFrames > 0 && frameCount % 10 < 5) {
+      return 0;
+    }
+    
+    int laserX = (int)map(x, 0, width, mi, mx);
+    int laserY = (int)map(y, 0, height, mx, mi);
+    
+    // Size modulated by mid frequencies
+    int laserSize = (int)map(size * (1.0 + midEnergy), 0, width, 0, mx - mi) / 2;
+    
+    int tipX = laserX;
+    int tipY = laserY - laserSize;
+    int leftX = laserX - laserSize;
+    int leftY = laserY + laserSize;
+    int rightX = laserX + laserSize;
+    int rightY = laserY + laserSize;
+    
+    // Color modulated by audio energy
+    int r = (int)(on * (0.5 + bassEnergy));
+    int g = (int)(on * (0.5 + midEnergy));
+    int b = (int)(on * (0.5 + highEnergy));
+    
+    addLaserLine(p, tipX, tipY, leftX, leftY, r, g, b);
+    addLaserLine(p, leftX, leftY, rightX, rightY, r, g, b);
+    addLaserLine(p, rightX, rightY, tipX, tipY, r, g, b);
+    
+    // Draw player trail modulated by audio energy
+    if (moveX != 0 || moveY != 0) {
+      int trailLength = (int)(laserSize * 2 * (1.0 + audioReactivity * 3));
+      int trailX = laserX - (moveX * trailLength);
+      int trailY = laserY - (moveY * trailLength);
+      addLaserLine(p, laserX, laserY, trailX, trailY, r/2, g/2, b);
+    }
+    
+    return 4;
+  }
+  
+  void setMoving(int xDir, int yDir) {
+    moveX = xDir;
+    moveY = yDir;
+  }
+  
+  boolean isInvulnerable() {
+    return invulnerableFrames > 0;
+  }
+  
+  void setInvulnerable(int frames) {
+    invulnerableFrames = frames;
+  }
+  
+  void loseLife() {
+    lives--;
+  }
+  
+  boolean isAlive() {
+    return lives > 0;
+  }
+  
+  // Fallback for on-screen visuals if needed
+  void drawOnScreen() {
+    // Removed screen visuals
+  }
+}
+
+// --- Unmodified Obstacle, PowerUp, and Particle classes below ---
 class Obstacle {
   float x, y;
   float w, h;
@@ -559,93 +735,6 @@ class PowerUp {
   
   void drawOnScreen() {
     // Removed screen visuals
-  }
-}
-
-class Player {
-  float x, y;
-  float size;
-  int moveX, moveY;
-  float speed;
-  int invulnerableFrames;
-  
-  Player() {
-    x = width / 2;
-    y = height - 100;
-    size = 20;
-    moveX = 0;
-    moveY = 0;
-    speed = 5;
-    invulnerableFrames = 0;
-  }
-  
-  void update() {
-    // Movement with audio-responsive speed
-    float audioSpeedMod = 1.0 + (audioReactivity * 0.5);
-    x += moveX * speed * audioSpeedMod;
-    y += moveY * speed * audioSpeedMod;
-    
-    x = constrain(x, size, width - size);
-    y = constrain(y, size, height - size);
-    
-    if (invulnerableFrames > 0) {
-      invulnerableFrames--;
-    }
-  }
-  
-  int draw(ArrayList<Point> p) {
-    if (invulnerableFrames > 0 && frameCount % 10 < 5) {
-      return 0;
-    }
-    
-    int laserX = (int)map(x, 0, width, mi, mx);
-    int laserY = (int)map(y, 0, height, mx, mi);
-    
-    // Size modulated by mid frequencies
-    int laserSize = (int)map(size * (1.0 + midEnergy), 0, width, 0, mx-mi) / 2;
-    
-    int tipX = laserX;
-    int tipY = laserY - laserSize;
-    int leftX = laserX - laserSize;
-    int leftY = laserY + laserSize;
-    int rightX = laserX + laserSize;
-    int rightY = laserY + laserSize;
-    
-    // Color modulated by audio energy
-    int r = (int)(on * (0.5 + bassEnergy));
-    int g = (int)(on * (0.5 + midEnergy));
-    int b = (int)(on * (0.5 + highEnergy));
-    
-    addLaserLine(p, tipX, tipY, leftX, leftY, r, g, b);
-    addLaserLine(p, leftX, leftY, rightX, rightY, r, g, b);
-    addLaserLine(p, rightX, rightY, tipX, tipY, r, g, b);
-    
-    // Draw player trail modulated by audio energy
-    if (moveX != 0 || moveY != 0) {
-      int trailLength = (int)(laserSize * 2 * (1.0 + audioReactivity * 3));
-      int trailX = laserX - (moveX * trailLength);
-      int trailY = laserY - (moveY * trailLength);
-      addLaserLine(p, laserX, laserY, trailX, trailY, r/2, g/2, b);
-    }
-    
-    return 4;
-  }
-  
-  void drawOnScreen() {
-    // Removed screen visuals
-  }
-  
-  void setMoving(int x, int y) {
-    moveX = x;
-    moveY = y;
-  }
-  
-  boolean isInvulnerable() {
-    return invulnerableFrames > 0;
-  }
-  
-  void setInvulnerable(int frames) {
-    invulnerableFrames = frames;
   }
 }
 
