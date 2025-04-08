@@ -15,7 +15,7 @@ class EtherdreamVisualizer extends Etherdream {
   private boolean isConnected = false;
   
   // Latest frame of points
-  private DACPoint[] latestFrame;
+  public DACPoint[] latestFrame;
   
   /**
    * Constructor

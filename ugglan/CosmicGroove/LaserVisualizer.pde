@@ -3,7 +3,11 @@
  * 
  * A visualizer for Etherdream laser DAC outputs without requiring actual hardware
  * Shows the laser beam path, points, and movement characteristics
+ * Thread-safe version - draw() and update() can be called from different threads
  */
+
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.Lock;
 
 class LaserVisualizer {
   // Display settings
@@ -19,15 +23,24 @@ class LaserVisualizer {
   private float velocityScale = 0.5;          // Scale for velocity visualization
   private int blurTrailLength = 20;           // Length of motion blur trail
   
-  // Laser point history for visualization
-  private ArrayList<DACPoint> pointHistory = new ArrayList<DACPoint>();
-  private ArrayList<PVector> velocityHistory = new ArrayList<PVector>();
-  private ArrayList<Float> intensityHistory = new ArrayList<Float>();
+  // Thread synchronization
+  private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
+  private final Lock readLock = rwLock.readLock();
+  private final Lock writeLock = rwLock.writeLock();
+  
+  // Laser point history for visualization - these are shared between threads
+  // Volatile for thread visibility
+  private volatile ArrayList<DACPoint> pointHistory = new ArrayList<DACPoint>();
+  private volatile ArrayList<PVector> velocityHistory = new ArrayList<PVector>();
+  private volatile ArrayList<Float> intensityHistory = new ArrayList<Float>();
   
   // UI components
   private PGraphics canvas;                   // Drawing canvas
-  private PVector lastPosition;               // Last position of laser
-  private PVector currentVelocity;            // Current velocity of laser
+  private volatile PVector lastPosition;      // Last position of laser - make volatile for visibility
+  private volatile PVector currentVelocity;   // Current velocity of laser - make volatile for visibility
+  
+  // Volatile flag to signal new data is available
+  private volatile boolean dataUpdated = false;
   
   /**
    * Constructor
@@ -41,15 +54,20 @@ class LaserVisualizer {
     
     // Ensure we start with some points in history by adding defaults
     // This ensures the visualizer shows something even before real points arrive
-    for (int i = 0; i < 10; i++) {
-      float angle = map(i, 0, 10, 0, TWO_PI);
-      int x = (int)(cos(angle) * 10000);
-      int y = (int)(sin(angle) * 10000);
-      
-      DACPoint testPoint = new DACPoint(x, y, 65535, 0, 0);
-      pointHistory.add(testPoint);
-      velocityHistory.add(new PVector(0, 0));
-      intensityHistory.add(1.0f);
+    writeLock.lock();
+    try {
+      for (int i = 0; i < 10; i++) {
+        float angle = map(i, 0, 10, 0, TWO_PI);
+        int x = (int)(cos(angle) * 10000);
+        int y = (int)(sin(angle) * 10000);
+        
+        DACPoint testPoint = new DACPoint(x, y, 65535, 0, 0);
+        pointHistory.add(testPoint);
+        velocityHistory.add(new PVector(0, 0));
+        intensityHistory.add(1.0f);
+      }
+    } finally {
+      writeLock.unlock();
     }
     
     println("LaserVisualizer initialized with canvas size: " + width + "x" + height);
@@ -57,6 +75,7 @@ class LaserVisualizer {
   
   /**
    * Update the visualizer with new points
+   * This method is called from a separate thread
    */
   public void update(DACPoint[] points) {
     if (points == null || points.length == 0) return;
@@ -64,53 +83,108 @@ class LaserVisualizer {
     // Debug - show point count
     println("Visualizer received " + points.length + " points");
     
-    // Clear old history completely when we get a new frame
-    // This ensures we're only showing the current frame
-    pointHistory.clear();
-    velocityHistory.clear();
-    intensityHistory.clear();
+    // Create thread-local temporary buffers for the new data
+    ArrayList<DACPoint> newPoints = new ArrayList<DACPoint>(points.length);
+    ArrayList<PVector> newVelocities = new ArrayList<PVector>(points.length);
+    ArrayList<Float> newIntensities = new ArrayList<Float>(points.length);
+    
+    // Create a local copy of lastPosition to avoid locking during calculation
+    PVector localLastPosition;
+    PVector localCurrentVelocity;
+    
+    // Get the current position/velocity values under read lock
+    readLock.lock();
+    try {
+      localLastPosition = lastPosition.copy();
+      localCurrentVelocity = currentVelocity.copy();
+    } finally {
+      readLock.unlock();
+    }
     
     // Process ALL new points - no sampling
     for (int i = 0; i < points.length; i++) {
       DACPoint point = points[i];
       
-      // Add to history
-      pointHistory.add(point);
+      // Add to our new points collection
+      newPoints.add(point);
       
       // Calculate current position in screen coordinates
       PVector currentPos = dacToScreen(point);
       
       // Calculate velocity
-      PVector velocity = PVector.sub(currentPos, lastPosition);
-      currentVelocity.lerp(velocity, 0.3); // Smooth the velocity
-      velocityHistory.add(currentVelocity.copy());
+      PVector velocity = PVector.sub(currentPos, localLastPosition);
+      localCurrentVelocity.lerp(velocity, 0.3); // Smooth the velocity
+      newVelocities.add(localCurrentVelocity.copy());
       
       // Calculate intensity based on RGB values
       float intensity = (point.r + point.g + point.b) / (float)(3 * 65535);
-      intensityHistory.add(intensity);
+      newIntensities.add(intensity);
       
       // Update last position
-      lastPosition = currentPos.copy();
+      localLastPosition = currentPos.copy();
+    }
+    
+    // Ensure all three collections have exactly the same size
+    int minSize = Math.min(Math.min(newPoints.size(), newVelocities.size()), newIntensities.size());
+    if (newPoints.size() > minSize) newPoints.subList(minSize, newPoints.size()).clear();
+    if (newVelocities.size() > minSize) newVelocities.subList(minSize, newVelocities.size()).clear();
+    if (newIntensities.size() > minSize) newIntensities.subList(minSize, newIntensities.size()).clear();
+    
+    // Now acquire the write lock to update the shared data
+    writeLock.lock();
+    try {
+      // Replace the shared collections atomically
+      pointHistory = new ArrayList<DACPoint>(newPoints);
+      velocityHistory = new ArrayList<PVector>(newVelocities);
+      intensityHistory = new ArrayList<Float>(newIntensities);
+      
+      // Update the shared position/velocity states
+      lastPosition = localLastPosition;
+      currentVelocity = localCurrentVelocity;
+      
+      // Set the flag to indicate new data is available
+      dataUpdated = true;
+    } finally {
+      writeLock.unlock();
     }
     
     // Debug - show how many points are now in the history
-    println("Visualizer pointHistory now contains " + pointHistory.size() + " points");
+    println("Visualizer pointHistory now contains " + newPoints.size() + " points");
   }
   
   /**
    * Draw the visualization
+   * This method is called from the main Processing thread
    */
   public void draw() {
+    // Create local copies of data to minimize lock duration
+    ArrayList<DACPoint> localPointHistory;
+    ArrayList<PVector> localVelocityHistory;
+    ArrayList<Float> localIntensityHistory;
+    int localPointCount;
+    
+    // Acquire read lock to copy data - create deep copies to prevent any chance of concurrent modification
+    readLock.lock();
+    try {
+      localPointHistory = new ArrayList<DACPoint>(pointHistory);
+      localVelocityHistory = new ArrayList<PVector>(velocityHistory);
+      localIntensityHistory = new ArrayList<Float>(intensityHistory);
+      localPointCount = pointHistory.size();
+      dataUpdated = false; // Reset the updated flag
+    } finally {
+      readLock.unlock();
+    }
+    
     canvas.beginDraw();
     canvas.background(0); // Solid black background for better contrast
     
     // Debug info - display point count
     canvas.fill(255);
     canvas.textSize(14);
-    canvas.text("Points: " + pointHistory.size(), 10, 20);
+    canvas.text("Points: " + localPointCount, 10, 20);
     
     // Debug - draw a test pattern if no points are available
-    if (pointHistory.size() < 2) {
+    if (localPointCount < 2) {
       canvas.stroke(255, 0, 0);
       canvas.strokeWeight(2);
       canvas.line(0, 0, canvasWidth/2, canvasHeight/2);
@@ -126,18 +200,18 @@ class LaserVisualizer {
     }
     
     // Draw motion blur if enabled
-    if (showMotionBlur && pointHistory.size() > blurTrailLength) {
-      drawMotionBlur();
+    if (showMotionBlur && localPointCount > blurTrailLength) {
+      drawMotionBlur(localPointHistory, localIntensityHistory);
     }
     
     // Draw beam path if enabled
     if (showBeam) {
-      drawBeamPath();
+      drawBeamPath(localPointHistory, localVelocityHistory);
     }
     
     // Draw points if enabled
     if (showPoints) {
-      drawPoints();
+      drawPoints(localPointHistory);
     }
     
     canvas.endDraw();
@@ -147,13 +221,13 @@ class LaserVisualizer {
   /**
    * Draw the laser beam path
    */
-  private void drawBeamPath() {
-    if (pointHistory.size() < 2) return;
+  private void drawBeamPath(ArrayList<DACPoint> points, ArrayList<PVector> velocities) {
+    if (points.size() < 2) return;
     
     // Draw all points in the history
-    for (int i = 0; i < pointHistory.size() - 1; i++) {
-      DACPoint current = pointHistory.get(i);
-      DACPoint next = pointHistory.get(i + 1);
+    for (int i = 0; i < points.size() - 1; i++) {
+      DACPoint current = points.get(i);
+      DACPoint next = points.get(i + 1);
       
       // Skip blanking segments (where RGB values are all 0)
       if (isBlanking(current) && isBlanking(next)) {
@@ -166,7 +240,7 @@ class LaserVisualizer {
       // Calculate color based on velocity or use the actual beam color
       if (showVelocityColors) {
         // Velocity-based coloring
-        PVector vel = velocityHistory.get(i);
+        PVector vel = velocities.get(i);
         float speed = vel.mag() * velocityScale;
         speed = constrain(speed, 0, 255);
         
@@ -195,12 +269,12 @@ class LaserVisualizer {
   /**
    * Draw the points
    */
-  private void drawPoints() {
-    if (pointHistory.size() < 1) return;
+  private void drawPoints(ArrayList<DACPoint> points) {
+    if (points.size() < 1) return;
     
     // Draw all points in the history
-    for (int i = 0; i < pointHistory.size(); i++) {
-      DACPoint point = pointHistory.get(i);
+    for (int i = 0; i < points.size(); i++) {
+      DACPoint point = points.get(i);
       
       // Skip blanking points
       if (isBlanking(point)) {
@@ -224,11 +298,11 @@ class LaserVisualizer {
   /**
    * Draw motion blur effect
    */
-  private void drawMotionBlur() {
-    int startIdx = max(0, pointHistory.size() - blurTrailLength);
+  private void drawMotionBlur(ArrayList<DACPoint> points, ArrayList<Float> intensities) {
+    int startIdx = max(0, points.size() - blurTrailLength);
     
-    for (int i = startIdx; i < pointHistory.size(); i++) {
-      DACPoint point = pointHistory.get(i);
+    for (int i = startIdx; i < points.size(); i++) {
+      DACPoint point = points.get(i);
       
       // Skip blanking points
       if (isBlanking(point)) {
@@ -236,8 +310,13 @@ class LaserVisualizer {
       }
       
       PVector pos = dacToScreen(point);
-      float alpha = map(i, startIdx, pointHistory.size(), 50, 150);
-      float intensity = intensityHistory.get(i);
+      float alpha = map(i, startIdx, points.size(), 50, 150);
+      
+      // Check if we have a matching intensity value
+      float intensity = 1.0f;
+      if (i < intensities.size()) {
+        intensity = intensities.get(i);
+      }
       
       // Map RGB values from DAC range to Processing RGB range
       float r = map(point.r, 0, 65535, 0, 255) * intensity;
@@ -247,7 +326,7 @@ class LaserVisualizer {
       // Draw the glow effect
       canvas.noStroke();
       canvas.fill(r, g, b, alpha / 3);
-      float size = map(i, startIdx, pointHistory.size(), 15, 5);
+      float size = map(i, startIdx, points.size(), 15, 5);
       canvas.ellipse(pos.x, pos.y, size, size);
     }
   }
@@ -273,59 +352,124 @@ class LaserVisualizer {
    * Toggle showing points
    */
   public void togglePoints() {
-    showPoints = !showPoints;
+    writeLock.lock();
+    try {
+      showPoints = !showPoints;
+    } finally {
+      writeLock.unlock();
+    }
   }
   
   /**
    * Toggle showing beam
    */
   public void toggleBeam() {
-    showBeam = !showBeam;
+    writeLock.lock();
+    try {
+      showBeam = !showBeam;
+    } finally {
+      writeLock.unlock();
+    }
   }
   
   /**
    * Toggle velocity-based coloring
    */
   public void toggleVelocityColors() {
-    showVelocityColors = !showVelocityColors;
+    writeLock.lock();
+    try {
+      showVelocityColors = !showVelocityColors;
+    } finally {
+      writeLock.unlock();
+    }
   }
   
   /**
    * Toggle motion blur
    */
   public void toggleMotionBlur() {
-    showMotionBlur = !showMotionBlur;
+    writeLock.lock();
+    try {
+      showMotionBlur = !showMotionBlur;
+    } finally {
+      writeLock.unlock();
+    }
   }
   
   /**
    * Set point size
    */
   public void setPointSize(int size) {
-    this.pointSize = size;
+    writeLock.lock();
+    try {
+      this.pointSize = size;
+    } finally {
+      writeLock.unlock();
+    }
   }
   
   /**
    * Set blur trail length
    */
   public void setBlurTrailLength(int length) {
-    this.blurTrailLength = length;
+    writeLock.lock();
+    try {
+      this.blurTrailLength = length;
+    } finally {
+      writeLock.unlock();
+    }
   }
   
   /**
    * Set velocity scale for visualization
    */
   public void setVelocityScale(float scale) {
-    this.velocityScale = scale;
+    writeLock.lock();
+    try {
+      this.velocityScale = scale;
+    } finally {
+      writeLock.unlock();
+    }
   }
   
   /**
    * Reset the visualizer
    */
   public void reset() {
-    pointHistory.clear();
-    velocityHistory.clear();
-    intensityHistory.clear();
-    lastPosition = new PVector(0, 0);
-    currentVelocity = new PVector(0, 0);
+    writeLock.lock();
+    try {
+      pointHistory.clear();
+      velocityHistory.clear();
+      intensityHistory.clear();
+      lastPosition = new PVector(0, 0);
+      currentVelocity = new PVector(0, 0);
+    } finally {
+      writeLock.unlock();
+    }
+  }
+  
+  /**
+   * Get a copy of the current DAC points
+   * This method can be called from any thread
+   * @return An array of the current DAC points
+   */
+  public DACPoint[] getDACPoints() {
+    readLock.lock();
+    try {
+      // Create a defensive copy of the points to ensure thread safety
+      DACPoint[] points = new DACPoint[pointHistory.size()];
+      
+      // Copy each point (assuming DACPoint is immutable or we make a deep copy)
+      for (int i = 0; i < pointHistory.size(); i++) {
+        // If DACPoint has a copy constructor or clone method, use it here
+        // Otherwise, we're returning a reference to the original point objects
+        // which is okay if DACPoint is immutable (doesn't have setters)
+        points[i] = pointHistory.get(i);
+      }
+      
+      return points;
+    } finally {
+      readLock.unlock();
+    }
   }
 }

@@ -82,7 +82,14 @@ EtherdreamVisualizer visualizer;
 
 // Optional recording component
 SimulationRecorder recorder;
-
+/**
+   * Get a copy of the current DAC points
+   * This method can be called from any thread
+   * @return An array of the current DAC points
+   */
+  public DACPoint[] getDACPoints() {
+    return visualizer.latestFrame;
+  }
 void setup() {
   size(800, 600);  // Increased window size for better visualization
   background(0);
