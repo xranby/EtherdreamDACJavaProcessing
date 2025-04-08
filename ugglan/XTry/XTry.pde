@@ -459,7 +459,7 @@ void noteOff(int channel, int pitch, int velocity) {
     }
   }
 }
-
+  
 // --- Modified Player class ---
 class Player {
   float x, y;
@@ -498,6 +498,10 @@ class Player {
   int draw(ArrayList<Point> p) {
     // Blink the player if invulnerable
     if (invulnerableFrames > 0 && frameCount % 10 < 5) {
+      return 0;
+    }
+    
+    if (lives == 0) {
       return 0;
     }
     
