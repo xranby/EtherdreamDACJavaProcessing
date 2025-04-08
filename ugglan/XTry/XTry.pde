@@ -46,7 +46,6 @@ float bassEnergy = 0.0;
 float midEnergy = 0.0;
 float highEnergy = 0.0;
 
-volatile ArrayList<Point> laserpoint;
 EtherdreamVisualizer visualizer;
 
 void setup() {
@@ -81,10 +80,6 @@ void setup() {
   powerUps = new ArrayList<PowerUp>();
   explosionParticles = new ArrayList<Particle>();
   
-  ArrayList<Point> p = new ArrayList<Point>();
-  p.add(new Point(mi, mx, 0, 0, 0));
-  laserpoint = p;
-  
   visualizer = new EtherdreamVisualizer(this);
 }
 
@@ -103,10 +98,8 @@ void draw() {
     updateGame();
     drawGame(p);
   }
-  
-  laserpoint = p;
-  
-  DACPoint[] dacPoints = getDACPointsAdjusted(laserpoint.toArray(new Point[0]));
+    
+  DACPoint[] dacPoints = getDACPointsAdjusted(p.toArray(new Point[0]));
   visualizer.setLatestFrame(dacPoints);
   visualizer.draw();
 }
@@ -534,7 +527,7 @@ class Player {
     if (moveX != 0 || moveY != 0) {
       int trailLength = (int)(laserSize * 2 * (1.0 + audioReactivity * 3));
       int trailX = laserX - (moveX * trailLength);
-      int trailY = laserY - (moveY * trailLength);
+      int trailY = laserY + (moveY * trailLength);
       addLaserLine(p, laserX, laserY, trailX, trailY, r/2, g/2, b);
     }
     
