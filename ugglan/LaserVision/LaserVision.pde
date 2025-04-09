@@ -1,10 +1,12 @@
-// Add global variables to track changes
+// Add global variables to track changes and original image
 PImage lastProcessedImage = null;
+PImage originalImage = null;  // Store the original unmodified image
 int lastLowThreshold = -1;
 int lastHighThreshold = -1;
 int lastBlurAmount = -1;
 int lastQualityLevel = -1;
 boolean imageChanged = true;
+boolean settingsChanged = false;
 
 boolean frameNeedsProcessing() {
   boolean processingNeeded = false;
@@ -22,6 +24,14 @@ boolean frameNeedsProcessing() {
         qualityLevel != lastQualityLevel) {
       
       processingNeeded = true;
+      
+      // Check if settings changed (not just the image content)
+      if (lowThreshold != lastLowThreshold || 
+          highThreshold != lastHighThreshold ||
+          blurAmount != lastBlurAmount ||
+          qualityLevel != lastQualityLevel) {
+        settingsChanged = true;
+      }
       
       // Update our tracking variables
       lastLowThreshold = lowThreshold;
@@ -242,6 +252,8 @@ void initializeInputSource() {
         sourceImage = loadImage(imagePath);
         if (sourceImage != null) {
           sourceImage.resize(width, height);
+          // Store the original image for reloading when settings change
+          originalImage = sourceImage.get();
           opencv = new OpenCV(this, sourceImage);
           println("Image loaded successfully: " + imagePath);
           imageChanged = true;
@@ -300,6 +312,13 @@ void draw() {
   
   // Process the current frame - but only for new/changed frames
   if (opencv != null && frameNeedsProcessing()) {
+    // If settings have changed and we're in image mode, reload original image
+    if (settingsChanged && currentMode == MODE_IMAGE && originalImage != null) {
+      sourceImage = originalImage.get();
+      opencv.loadImage(sourceImage);
+      settingsChanged = false;
+    }
+    
     processCurrentFrame();
   }
   
@@ -714,10 +733,10 @@ void drawUI() {
     case MODE_WEBCAM: modeText += "Webcam"; break;
   }
   
-  text(modeText, 10, height - 100);
-  text("FPS: " + frameRate, 10, height - 80);
-  text("Contours: " + optimizedContours.size(), 10, height - 60);
-  text("Points: " + totalPoints + " / " + maxPoints, 10, height - 40);
+  text(modeText, 10, height - 120);
+  text("FPS: " + frameRate, 10, height - 100);
+  text("Contours: " + optimizedContours.size(), 10, height - 80);
+  text("Points: " + totalPoints + " / " + maxPoints, 10, height - 60);
   
   // Display point limiting status
   String limitStatus = "Point Limiting: ";
@@ -731,16 +750,21 @@ void drawUI() {
     limitStatus += "Good";
     fill(0, 255, 0);
   }
-  text(limitStatus, 10, height - 20);
+  text(limitStatus, 10, height - 40);
+  
+  // Display settings reload status
+  fill(255);
+  text("Settings reload: " + (settingsChanged ? "Pending" : "None"), 10, height - 20);
   
   // Display help text
   fill(255, 200);
   textAlign(RIGHT, TOP);
-  text("1/2/3: Change mode | +/- : Adjust threshold | Q/A : Blur | W/S : Quality", width - 10, height - 100);
-  text("Left click: Draw black | Right click: Draw white | M: Clear", width - 10, height - 80);
-  text("Low threshold: " + lowThreshold + " | High threshold: " + highThreshold, width - 10, height - 60);
-  text("Quality: " + qualityLevel + " | Blur: " + blurAmount, width - 10, height - 40);
-  text("D: Toggle dynamic quality (" + (dynamicQuality==1 ? "ON" : "OFF") + ")", width - 10, height - 20);
+  text("1/2/3: Change mode | +/- : Adjust threshold | Q/A : Blur | W/S : Quality", width - 10, height - 120);
+  text("Left click: Draw black | Right click: Draw white | M: Clear | R: Reload", width - 10, height - 100);
+  text("Low threshold: " + lowThreshold + " | High threshold: " + highThreshold, width - 10, height - 80);
+  text("Quality: " + qualityLevel + " | Blur: " + blurAmount, width - 10, height - 60);
+  text("D: Toggle dynamic quality (" + (dynamicQuality==1 ? "ON" : "OFF") + ")", width - 10, height - 40);
+  text("Settings changed: " + (settingsChanged ? "YES" : "NO"), width - 10, height - 20);
 }
 
 void nextGalleryImage() {
@@ -749,11 +773,16 @@ void nextGalleryImage() {
   galleryIndex = (galleryIndex + 1) % gallerySize;
   sourceImage = galleryImages[galleryIndex];
   
+  // Store the new image as the original for this gallery item
+  originalImage = sourceImage.get();
+  
   if (opencv != null) {
     opencv.loadImage(sourceImage);
   } else {
     opencv = new OpenCV(this, sourceImage);
   }
+  
+  imageChanged = true;
 }
 
 void mousePressed() {
@@ -805,6 +834,9 @@ void mousePressed() {
       
       // Replace sourceImage with modified buffer
       sourceImage = buffer.get();
+      
+      // Update the original image as well, since this is a user edit, not a setting change
+      originalImage = sourceImage.get();
       
       // Mark image as changed to trigger reprocessing
       imageChanged = true;
@@ -860,7 +892,20 @@ void mouseReleased() {
       // Replace sourceImage with blank buffer
       sourceImage = buffer.get();
       
+      // Update the original image as well
+      originalImage = sourceImage.get();
+      
       // Mark image as changed to trigger reprocessing
+      imageChanged = true;
+      
+      if (opencv != null) {
+        opencv.loadImage(sourceImage);
+      }
+    }
+  } else if (key == 'r' || key == 'R') {
+    // Reload original image (useful for undoing drawing)
+    if (currentMode == MODE_IMAGE && originalImage != null) {
+      sourceImage = originalImage.get();
       imageChanged = true;
       
       if (opencv != null) {
@@ -872,31 +917,40 @@ void mouseReleased() {
   // Adjust thresholds
   if (key == '+' || key == '=') {
     lowThreshold = constrain(lowThreshold + 5, 0, 255);
+    settingsChanged = true;
   } else if (key == '-' || key == '_') {
     lowThreshold = constrain(lowThreshold - 5, 0, 255);
+    settingsChanged = true;
   } else if (key == ']') {
     highThreshold = constrain(highThreshold + 10, 0, 255);
+    settingsChanged = true;
   } else if (key == '[') {
     highThreshold = constrain(highThreshold - 10, 0, 255);
+    settingsChanged = true;
   }
   
   // Adjust blur
   if (key == 'q' || key == 'Q') {
     blurAmount = constrain(blurAmount + 2, 1, 15);
+    settingsChanged = true;
   } else if (key == 'a' || key == 'A') {
     blurAmount = constrain(blurAmount - 2, 1, 15);
+    settingsChanged = true;
   }
   
   // Adjust quality
   if (key == 'w' || key == 'W') {
     qualityLevel = constrain(qualityLevel + 1, 1, 10);
+    settingsChanged = true;
   } else if (key == 's' || key == 'S') {
     qualityLevel = constrain(qualityLevel - 1, 1, 10);
+    settingsChanged = true;
   }
   
   // Toggle dynamic quality
   if (key == 'd' || key == 'D') {
     dynamicQuality = 1 - dynamicQuality;
+    settingsChanged = true;
   }
   
   // Pass to visualizer
