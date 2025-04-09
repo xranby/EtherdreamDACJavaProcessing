@@ -1,4 +1,88 @@
-import themidibus.*;
+void enforcePointLimit(int limit) {
+  // Count current total points
+  totalPoints = countTotalPoints();
+  
+  if (totalPoints <= limit) {
+    return; // Already under the limit
+  }
+  
+  // First try: increase simplification level
+  int tempQualityLevel = qualityLevel;
+  while (totalPoints > limit && tempQualityLevel < 20) {
+    tempQualityLevel++;
+    
+    // Apply higher quality level temporarily
+    int savedQualityLevel = qualityLevel;
+    qualityLevel = tempQualityLevel;
+    simplifyAllContours();
+    qualityLevel = savedQualityLevel;
+    
+    // Recount points
+    totalPoints = countTotalPoints();
+  }
+  
+  // If still over limit, start removing smaller contours
+  if (totalPoints > limit) {
+    // Sort contours by size (smallest first)
+    // Use manual bubble sort instead of Collections.sort to avoid generics issues
+    for (int i = 0; i < optimizedContours.size() - 1; i++) {
+      for (int j = 0; j < optimizedContours.size() - i - 1; j++) {
+        if (optimizedContours.get(j).size() > optimizedContours.get(j + 1).size()) {
+          // Swap
+          ArrayList<PVector> temp = optimizedContours.get(j);
+          optimizedContours.set(j, optimizedContours.get(j + 1));
+          optimizedContours.set(j + 1, temp);
+        }
+      }
+    }
+    
+    // Remove smallest contours until under limit
+    while (totalPoints > limit && optimizedContours.size() > 0) {
+      totalPoints -= optimizedContours.get(0).size();
+      optimizedContours.remove(0);
+    }
+    
+    // Resort for optimal drawing
+    optimizeRenderingOrder();
+  }
+  
+  // If still over limit as a last resort, apply uniform subsampling
+  if (totalPoints > limit) {
+    float reductionFactor = (float)limit / totalPoints;
+    
+    for (int i = 0; i < optimizedContours.size(); i++) {
+      ArrayList<PVector> contour = optimizedContours.get(i);
+      
+      if (contour.size() <= 3) continue;
+      
+      // Calculate how many points to keep
+      int targetSize = max(3, (int)(contour.size() * reductionFactor));
+      
+      if (targetSize >= contour.size()) continue;
+      
+      // Create new subsampled contour
+      ArrayList<PVector> subsampled = new ArrayList<PVector>();
+      subsampled.add(contour.get(0)); // Always include first point
+      
+      // Add evenly spaced points
+      if (targetSize > 2) {
+        float step = (contour.size() - 2) / (float)(targetSize - 2);
+        for (int j = 1; j < targetSize - 1; j++) {
+          int index = 1 + (int)(j * step);
+          index = constrain(index, 1, contour.size() - 2);
+          subsampled.add(contour.get(index));
+        }
+      }
+      
+      subsampled.add(contour.get(contour.size() - 1)); // Always include last point
+      
+      optimizedContours.set(i, subsampled);
+    }
+    
+    // Final count
+    totalPoints = countTotalPoints();
+  }
+}import themidibus.*;
 import ddf.minim.*;
 import ddf.minim.analysis.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -271,6 +355,9 @@ void processCurrentFrame() {
   
   // Optimize contours for laser display
   optimizeContours();
+  
+  // Enforce point count limit
+  enforcePointLimit(maxPoints);
 }
 
 void optimizeContours() {
@@ -280,12 +367,17 @@ void optimizeContours() {
     return;
   }
   
-  // First pass: convert to our format
+  // First pass: convert to our format and apply initial filtering
   for (Contour contour : contours) {
     ArrayList<PVector> points = contour.getPoints();
     
     // Skip contours that are too small
     if (points.size() < 3) {
+      continue;
+    }
+    
+    // Skip very small contours (likely noise)
+    if (contour.area() < 10) {
       continue;
     }
     
@@ -297,32 +389,37 @@ void optimizeContours() {
     optimizedContours.add(optimized);
   }
   
-  // Second pass: simplify contours
-  if (dynamicQuality == 1) {
-    // Dynamic quality - reduce until we're under point count
-    totalPoints = countTotalPoints();
-    
-    while (totalPoints > maxPoints && qualityLevel < 10) {
-      qualityLevel++;
-      simplifyAllContours();
-      totalPoints = countTotalPoints();
+  // If we have too many contours, keep only the largest ones
+  if (optimizedContours.size() > 100) {
+    // Sort contours by area (largest first) using bubble sort
+    for (int i = 0; i < optimizedContours.size() - 1; i++) {
+      for (int j = 0; j < optimizedContours.size() - i - 1; j++) {
+        if (optimizedContours.get(j).size() < optimizedContours.get(j + 1).size()) {
+          // Swap
+          ArrayList<PVector> temp = optimizedContours.get(j);
+          optimizedContours.set(j, optimizedContours.get(j + 1));
+          optimizedContours.set(j + 1, temp);
+        }
+      }
     }
     
-    while (totalPoints < maxPoints/2 && qualityLevel > 1) {
-      qualityLevel--;
-      simplifyAllContours();
-      totalPoints = countTotalPoints();
+    // Keep only the largest contours
+    while (optimizedContours.size() > 100) {
+      optimizedContours.remove(optimizedContours.size() - 1);
     }
-  } else {
-    // Fixed quality level
-    simplifyAllContours();
   }
+  
+  // Apply simplification
+  simplifyAllContours();
   
   // Sort contours for optimal drawing order
   optimizeRenderingOrder();
 }
 
 void simplifyAllContours() {
+  // Apply Douglas-Peucker simplification algorithm
+  float epsilon = qualityLevel * 0.5; // Simplification threshold based on quality level
+  
   for (int i = 0; i < optimizedContours.size(); i++) {
     ArrayList<PVector> contour = optimizedContours.get(i);
     
@@ -330,18 +427,81 @@ void simplifyAllContours() {
       continue;
     }
     
-    ArrayList<PVector> simplified = new ArrayList<PVector>();
-    simplified.add(contour.get(0)); // Always include the first point
+    // Use a more intelligent simplification approach
+    ArrayList<PVector> simplified = douglasPeuckerSimplify(contour, epsilon);
     
-    // Add every Nth point
-    for (int j = 1; j < contour.size() - 1; j += qualityLevel) {
-      simplified.add(contour.get(j));
+    // Ensure we have at least start and end points
+    if (simplified.size() < 2) {
+      simplified.clear();
+      simplified.add(contour.get(0));
+      simplified.add(contour.get(contour.size() - 1));
     }
-    
-    simplified.add(contour.get(contour.size() - 1)); // Always include the last point
     
     optimizedContours.set(i, simplified);
   }
+}
+
+ArrayList<PVector> douglasPeuckerSimplify(ArrayList<PVector> points, float epsilon) {
+  if (points.size() < 3) {
+    return new ArrayList<PVector>(points);
+  }
+  
+  // Find the point with the maximum distance
+  float dmax = 0;
+  int index = 0;
+  
+  for (int i = 1; i < points.size() - 1; i++) {
+    float d = perpendicularDistance(points.get(i), points.get(0), points.get(points.size() - 1));
+    if (d > dmax) {
+      index = i;
+      dmax = d;
+    }
+  }
+  
+  // If max distance is greater than epsilon, recursively simplify
+  ArrayList<PVector> resultList = new ArrayList<PVector>();
+  if (dmax > epsilon) {
+    // Recursive call
+    ArrayList<PVector> recResults1 = douglasPeuckerSimplify(new ArrayList<PVector>(points.subList(0, index + 1)), epsilon);
+    ArrayList<PVector> recResults2 = douglasPeuckerSimplify(new ArrayList<PVector>(points.subList(index, points.size())), epsilon);
+    
+    // Build the result list
+    resultList.addAll(recResults1.subList(0, recResults1.size() - 1));
+    resultList.addAll(recResults2);
+  } else {
+    // Just return first and last points
+    resultList.add(points.get(0));
+    resultList.add(points.get(points.size() - 1));
+  }
+  
+  return resultList;
+}
+
+float perpendicularDistance(PVector pt, PVector lineStart, PVector lineEnd) {
+  float dx = lineEnd.x - lineStart.x;
+  float dy = lineEnd.y - lineStart.y;
+  
+  // Normalize
+  float mag = sqrt(dx * dx + dy * dy);
+  if (mag > 0.0) {
+    dx /= mag;
+    dy /= mag;
+  }
+  
+  // Translate the point and get the dot product
+  float pvx = pt.x - lineStart.x;
+  float pvy = pt.y - lineStart.y;
+  float pvdot = dx * pvx + dy * pvy;
+  
+  // Scale line direction vector
+  float dsx = pvdot * dx;
+  float dsy = pvdot * dy;
+  
+  // Subtract this from the point vector
+  float ax = pvx - dsx;
+  float ay = pvy - dsy;
+  
+  return sqrt(ax * ax + ay * ay);
 }
 
 int countTotalPoints() {
@@ -408,20 +568,51 @@ void drawContoursToLaser(ArrayList<Point> p) {
     return;
   }
   
+  // Track points used so far
+  int pointsUsed = 0;
+  int pointLimit = min(maxPoints, 3000); // Hard limit of 3000
+  
+  // First calculate total available points with overhead for jumps
+  int totalAvailablePoints = pointLimit - optimizedContours.size(); // One extra point per contour for jumps
+  
+  // Calculate points per contour fairly
+  float pointsPerContour = totalAvailablePoints / (float)optimizedContours.size();
+  
   for (ArrayList<PVector> contour : optimizedContours) {
     if (contour.size() < 2) continue;
+    
+    // Check if we have enough points left
+    if (pointsUsed >= pointLimit - 1) {
+      break; // Stop if we're at the limit
+    }
+    
+    // How many points to use for this contour
+    int pointsToUse = min((int)pointsPerContour, contour.size());
+    
+    // If very few points left, just draw minimal contours
+    if (pointLimit - pointsUsed < 10) {
+      pointsToUse = min(3, contour.size());
+    }
+    
+    // Always use at least 2 points if possible
+    pointsToUse = max(2, pointsToUse);
+    
+    // Calculate step size for even distribution
+    float step = (contour.size() - 1) / (float)(pointsToUse - 1);
     
     // Move to first point without drawing
     PVector firstPoint = contour.get(0);
     int laserX = (int)map(firstPoint.x, 0, width, mi, mx);
-    int laserY = (int)map(firstPoint.y, 0, height, mx, mi); // Invert Y axis
+    int laserY = (int)map(firstPoint.y, 0, height, mx, mi);
     p.add(new Point(laserX, laserY, 0, 0, 0));
+    pointsUsed++;
     
-    // Draw the rest of the contour
-    for (int i = 1; i < contour.size(); i++) {
-      PVector point = contour.get(i);
+    // Draw remaining points
+    for (int i = 1; i < pointsToUse; i++) {
+      int index = min((int)(i * step), contour.size() - 1);
+      PVector point = contour.get(index);
       laserX = (int)map(point.x, 0, width, mi, mx);
-      laserY = (int)map(point.y, 0, height, mx, mi); // Invert Y axis
+      laserY = (int)map(point.y, 0, height, mx, mi);
       
       // Color based on position for visual interest
       int r = (int)(on * (0.5 + 0.5 * sin(point.x * 0.01)));
@@ -429,8 +620,17 @@ void drawContoursToLaser(ArrayList<Point> p) {
       int b = (int)(on * (0.3 + 0.7 * sin((point.x + point.y) * 0.005)));
       
       p.add(new Point(laserX, laserY, r, g, b));
+      pointsUsed++;
+      
+      // Emergency exit if we're getting too close to the limit
+      if (pointsUsed >= pointLimit - 1) {
+        break;
+      }
     }
   }
+  
+  // Update the actual point count for display
+  totalPoints = pointsUsed;
 }
 
 void addLaserCircle(ArrayList<Point> p, int centerX, int centerY, int radius, int r, int g, int b) {
@@ -477,18 +677,33 @@ void drawUI() {
     case MODE_WEBCAM: modeText += "Webcam"; break;
   }
   
-  text(modeText, 10, height - 80);
-  text("FPS: " + frameRate, 10, height - 60);
-  text("Contours: " + optimizedContours.size(), 10, height - 40);
-  text("Points: " + totalPoints + " / " + maxPoints, 10, height - 20);
+  text(modeText, 10, height - 100);
+  text("FPS: " + frameRate, 10, height - 80);
+  text("Contours: " + optimizedContours.size(), 10, height - 60);
+  text("Points: " + totalPoints + " / " + maxPoints, 10, height - 40);
+  
+  // Display point limiting status
+  String limitStatus = "Point Limiting: ";
+  if (totalPoints > maxPoints) {
+    limitStatus += "OVER LIMIT!";
+    fill(255, 0, 0);
+  } else if (totalPoints > maxPoints * 0.9) {
+    limitStatus += "Near limit";
+    fill(255, 255, 0);
+  } else {
+    limitStatus += "Good";
+    fill(0, 255, 0);
+  }
+  text(limitStatus, 10, height - 20);
   
   // Display help text
   fill(255, 200);
   textAlign(RIGHT, TOP);
-  text("1/2/3: Change mode | +/- : Adjust threshold | Q/A : Blur | W/S : Quality", width - 10, height - 80);
-  text("Left click: Draw black | Right click: Draw white | M: Clear", width - 10, height - 60);
-  text("Low threshold: " + lowThreshold + " | High threshold: " + highThreshold, width - 10, height - 40);
-  text("Quality: " + qualityLevel + " | Blur: " + blurAmount, width - 10, height - 20);
+  text("1/2/3: Change mode | +/- : Adjust threshold | Q/A : Blur | W/S : Quality", width - 10, height - 100);
+  text("Left click: Draw black | Right click: Draw white | M: Clear", width - 10, height - 80);
+  text("Low threshold: " + lowThreshold + " | High threshold: " + highThreshold, width - 10, height - 60);
+  text("Quality: " + qualityLevel + " | Blur: " + blurAmount, width - 10, height - 40);
+  text("D: Toggle dynamic quality (" + (dynamicQuality==1 ? "ON" : "OFF") + ")", width - 10, height - 20);
 }
 
 void nextGalleryImage() {
