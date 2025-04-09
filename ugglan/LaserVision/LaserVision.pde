@@ -1,4 +1,39 @@
-void enforcePointLimit(int limit) {
+// Add global variables to track changes
+PImage lastProcessedImage = null;
+int lastLowThreshold = -1;
+int lastHighThreshold = -1;
+int lastBlurAmount = -1;
+int lastQualityLevel = -1;
+boolean imageChanged = true;
+
+boolean frameNeedsProcessing() {
+  boolean processingNeeded = false;
+  
+  // For webcam and video, we always process new frames
+  if (currentMode == MODE_WEBCAM || currentMode == MODE_VIDEO) {
+    processingNeeded = true;
+  } 
+  // For image mode, only process when image changes or parameters change
+  else if (currentMode == MODE_IMAGE) {
+    if (imageChanged || 
+        lowThreshold != lastLowThreshold || 
+        highThreshold != lastHighThreshold ||
+        blurAmount != lastBlurAmount ||
+        qualityLevel != lastQualityLevel) {
+      
+      processingNeeded = true;
+      
+      // Update our tracking variables
+      lastLowThreshold = lowThreshold;
+      lastHighThreshold = highThreshold;
+      lastBlurAmount = blurAmount;
+      lastQualityLevel = qualityLevel;
+      imageChanged = false;
+    }
+  }
+  
+  return processingNeeded;
+}void enforcePointLimit(int limit) {
   // Count current total points
   totalPoints = countTotalPoints();
   
@@ -209,6 +244,7 @@ void initializeInputSource() {
           sourceImage.resize(width, height);
           opencv = new OpenCV(this, sourceImage);
           println("Image loaded successfully: " + imagePath);
+          imageChanged = true;
         } else {
           println("Failed to load image: " + imagePath);
         }
@@ -262,8 +298,8 @@ void draw() {
   // Update input source
   updateInputSource();
   
-  // Process the current frame
-  if (opencv != null) {
+  // Process the current frame - but only for new/changed frames
+  if (opencv != null && frameNeedsProcessing()) {
     processCurrentFrame();
   }
   
@@ -337,6 +373,7 @@ void updateInputSource() {
   if (galleryMode && millis() - lastGalleryChange > galleryChangeTime) {
     nextGalleryImage();
     lastGalleryChange = millis();
+    imageChanged = true;
   }
 }
 
@@ -769,6 +806,9 @@ void mousePressed() {
       // Replace sourceImage with modified buffer
       sourceImage = buffer.get();
       
+      // Mark image as changed to trigger reprocessing
+      imageChanged = true;
+      
       if (opencv != null) {
         opencv.loadImage(sourceImage);
       }
@@ -819,6 +859,9 @@ void mouseReleased() {
       
       // Replace sourceImage with blank buffer
       sourceImage = buffer.get();
+      
+      // Mark image as changed to trigger reprocessing
+      imageChanged = true;
       
       if (opencv != null) {
         opencv.loadImage(sourceImage);
